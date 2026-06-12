@@ -34,8 +34,8 @@ def main():
     data_transform = transforms.ToTensor()
 
     # 路径配置
-    root_low = r"D:\Datasets\NTM609\test\low"
-    root_high = r"D:\Datasets\NTM609\test\high"
+    root_low = "datasets/LOLv2/Test/low"
+    root_high = "datasets/LOLv2/Test/high"
     assert os.path.exists(root_low), f"low路径不存在: {root_low}"
     assert os.path.exists(root_high), f"high路径不存在: {root_high}"
 

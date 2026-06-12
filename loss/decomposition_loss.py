@@ -66,8 +66,14 @@ def gradient_no_abs(maps, direction, device='cuda', kernel='sobel'):
 
 
 class Decom_Loss(nn.Module):
-    def __init__(self):
+    def __init__(self, recon_weight=20, cross_recon_weight=1, bdsp_weight=1,
+                 smooth_weight=0, self_recon_weight=1):
         super().__init__()
+        self.recon_weight = recon_weight
+        self.cross_recon_weight = cross_recon_weight
+        self.bdsp_weight = bdsp_weight
+        self.smooth_weight = smooth_weight
+        self.self_recon_weight = self_recon_weight
 
     def gradient(self, input_tensor, direction):
         self.smooth_kernel_x = torch.FloatTensor([[0, 0], [-1, 1]]).view((1, 1, 2, 2)).cuda()
@@ -94,23 +100,39 @@ class Decom_Loss(nn.Module):
         L_low_3 = torch.cat((L_low, L_low, L_low), dim=1)
         L_high_3 = torch.cat((L_high, L_high, L_high), dim=1)
 
+        # Reconstruction loss: R * L ≈ I
         self.recon_loss_low = F.l1_loss(R_low * L_low_3, I_low)
         self.recon_loss_high = F.l1_loss(R_high * L_high_3, I_high)
+
+        # Cross-illumination consistency loss
         avg_low = torch.max(I_low, dim=1, keepdim=True)[0]
         avg_high = torch.max(I_high, dim=1, keepdim=True)[0]
         self.recon_loss_crs_low = F.l1_loss(avg_high, L_high)
         self.recon_loss_crs_high = F.l1_loss(avg_low, L_low)
-        self.equal_R_loss = F.l1_loss(BDSP_Face(R_low), BDSP_Face(I_low)) + F.l1_loss(BDSP_Face(R_high), BDSP_Face(I_high))
-        self.r_l_loss = F.l1_loss(L_R_low, L_R_high)
 
-        self.loss_Decom = (20 * self.recon_loss_high + 20 * self.recon_loss_low +
-                           1 * self.recon_loss_crs_low + 1 * self.recon_loss_crs_high +
-                           1 * self.equal_R_loss + self.r_l_loss)
+        # BDSP structure preservation loss
+        self.bdsp_loss = F.l1_loss(BDSP_Face(R_low), BDSP_Face(I_low)) + F.l1_loss(BDSP_Face(R_high), BDSP_Face(I_high))
+
+        # Self-reconstruction constraint
+        self.self_recon_loss = F.l1_loss(L_R_low, L_R_high)
+
+        # Illumination smoothness loss
+        self.Ismooth_loss_low = self.smooth(L_low, R_low)
+        self.Ismooth_loss_high = self.smooth(L_high, R_high)
+
+        # Weighted total loss
+        self.loss_Decom = (self.recon_weight * (self.recon_loss_low + self.recon_loss_high) +
+                           self.cross_recon_weight * (self.recon_loss_crs_low + self.recon_loss_crs_high) +
+                           self.bdsp_weight * self.bdsp_loss +
+                           self.self_recon_weight * self.self_recon_loss +
+                           self.smooth_weight * (self.Ismooth_loss_low + self.Ismooth_loss_high))
 
         return (self.loss_Decom,
-                20 * (self.recon_loss_low + self.recon_loss_high),
-                (self.recon_loss_crs_low + self.recon_loss_crs_high),
-                self.r_l_loss)
+                self.recon_loss_low + self.recon_loss_high,
+                self.recon_loss_crs_low + self.recon_loss_crs_high,
+                self.bdsp_loss,
+                self.Ismooth_loss_low + self.Ismooth_loss_high,
+                self.self_recon_loss)
 
 
 def normalize_grad(gradient_orig):

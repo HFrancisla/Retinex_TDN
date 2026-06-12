@@ -23,6 +23,26 @@ import cv2
 from loss import Decom_Loss
 
 
+def load_config(config_path: str) -> dict:
+    """
+    加载 YAML 配置文件。
+
+    Args:
+        config_path: YAML 配置文件路径
+
+    Returns:
+        dict: 配置字典
+    """
+    import yaml
+
+    assert os.path.exists(config_path), f"Config file: '{config_path}' does not exist."
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+
+    return cfg
+
+
 def read_data(root: str):
     assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
 
@@ -78,17 +98,20 @@ def read_data(root: str):
     return train_low_path, train_high_path, val_low_path, val_high_path
 
 
-def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch):
+def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
     model.train()
-    loss_function = Decom_Loss()
+    loss_cfg = loss_cfg or {}
+    loss_function = Decom_Loss(**loss_cfg)
 
     if torch.cuda.is_available():
         loss_function = loss_function.to(device)
 
     accu_total_loss = torch.zeros(1).to(device)
-    accu_rec_loss = torch.zeros(1).to(device)
-    accu_equal_R_loss = torch.zeros(1).to(device)
+    accu_recon_loss = torch.zeros(1).to(device)
+    accu_cross_loss = torch.zeros(1).to(device)
+    accu_bdsp_loss = torch.zeros(1).to(device)
     accu_smooth_loss = torch.zeros(1).to(device)
+    accu_self_recon_loss = torch.zeros(1).to(device)
 
     optimizer.zero_grad()
 
@@ -106,19 +129,30 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch):
         _, L_R_low = model(R_low)
         _, L_R_high = model(R_high)
 
-        loss, loss_rec, loss_equal_R, loss_smooth = loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
+        loss, loss_recon, loss_cross, loss_bdsp, loss_smooth, loss_self_recon = \
+            loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
         loss.backward()
 
         accu_total_loss += loss.detach()
-        accu_rec_loss += loss_rec.detach()
-        accu_equal_R_loss += loss_equal_R.detach()
+        accu_recon_loss += loss_recon.detach()
+        accu_cross_loss += loss_cross.detach()
+        accu_bdsp_loss += loss_bdsp.detach()
         accu_smooth_loss += loss_smooth.detach()
+        accu_self_recon_loss += loss_self_recon.detach()
 
         lr = optimizer.param_groups[0]["lr"]
 
-        data_loader.desc = "[train epoch {}] loss: {:.3f}  Rec loss: {:.3f}  equal_R loss: {:.3f}  smooth loss: {:.3f}  lr: {:.6f}".format(epoch, accu_total_loss.item() / (step + 1),
-            accu_rec_loss.item() / (step + 1), accu_equal_R_loss.item() / (step + 1), accu_smooth_loss.item() / (step + 1), lr)
+        n = step + 1
+        data_loader.desc = (
+            "[train epoch {}] total: {:.3f}  recon: {:.3f}  cross: {:.3f}  "
+            "bdsp: {:.3f}  smooth: {:.3f}  self-recon: {:.3f}  lr: {:.6f}"
+        ).format(
+            epoch,
+            accu_total_loss.item() / n, accu_recon_loss.item() / n,
+            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
+            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
+        )
 
         if not torch.isfinite(loss):
             print('WARNING: non-finite loss, ending training ', loss)
@@ -128,19 +162,25 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch):
         lr_scheduler.step()
         optimizer.zero_grad()
 
-    return accu_total_loss.item() / (step + 1), accu_rec_loss.item() / (step + 1), accu_equal_R_loss.item() / (step + 1), accu_smooth_loss.item() / (step + 1), lr
+    n = step + 1
+    return (accu_total_loss.item() / n, accu_recon_loss.item() / n,
+            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
+            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr)
 
 
 @torch.no_grad()
-def evaluate(model, data_loader, device, epoch, lr, filefold_path):
-    loss_function = Decom_Loss()
+def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None):
+    loss_cfg = loss_cfg or {}
+    loss_function = Decom_Loss(**loss_cfg)
 
     model.eval()
 
     accu_total_loss = torch.zeros(1).to(device)
-    accu_rec_loss = torch.zeros(1).to(device)
-    accu_equal_R_loss = torch.zeros(1).to(device)
+    accu_recon_loss = torch.zeros(1).to(device)
+    accu_cross_loss = torch.zeros(1).to(device)
+    accu_bdsp_loss = torch.zeros(1).to(device)
     accu_smooth_loss = torch.zeros(1).to(device)
+    accu_self_recon_loss = torch.zeros(1).to(device)
     save_epoch = 20
 
     if torch.cuda.is_available():
@@ -162,6 +202,9 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path):
         R_low, L_low = model(I_low)
         R_high, L_high = model(I_high)
 
+        _, L_R_low = model(R_low)
+        _, L_R_high = model(R_high)
+
         if epoch % save_epoch == 0:
             R_low_img = tensor2numpy_R(R_low)
             R_high_img = tensor2numpy_R(R_high)
@@ -172,17 +215,31 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path):
             save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
             save_pic(L_high_img, evalfold_path, str(step) + "_L_high")
 
-        loss, loss_rec, loss_equal_R, loss_smooth = loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_low, L_high)
+        loss, loss_recon, loss_cross, loss_bdsp, loss_smooth, loss_self_recon = \
+            loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
         accu_total_loss += loss
-        accu_rec_loss += loss_rec
-        accu_equal_R_loss += loss_equal_R
+        accu_recon_loss += loss_recon
+        accu_cross_loss += loss_cross
+        accu_bdsp_loss += loss_bdsp
         accu_smooth_loss += loss_smooth
+        accu_self_recon_loss += loss_self_recon
 
-        data_loader.desc = "[val epoch {}] loss: {:.3f}  Rec loss: {:.3f}  equal_R loss: {:.3f}  smooth loss: {:.3f}  lr: {:.6f}".format(epoch, accu_total_loss.item() / (step + 1),
-            accu_rec_loss.item() / (step + 1), accu_equal_R_loss.item() / (step + 1), accu_smooth_loss.item() / (step + 1), lr)
+        n = step + 1
+        data_loader.desc = (
+            "[val epoch {}] total: {:.3f}  recon: {:.3f}  cross: {:.3f}  "
+            "bdsp: {:.3f}  smooth: {:.3f}  self-recon: {:.3f}  lr: {:.6f}"
+        ).format(
+            epoch,
+            accu_total_loss.item() / n, accu_recon_loss.item() / n,
+            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
+            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
+        )
 
-    return accu_total_loss.item() / (step + 1), accu_rec_loss.item() / (step + 1), accu_equal_R_loss.item() / (step + 1), accu_smooth_loss.item() / (step + 1)
+    n = step + 1
+    return (accu_total_loss.item() / n, accu_recon_loss.item() / n,
+            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
+            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n)
 
 
 def create_lr_scheduler(optimizer,
