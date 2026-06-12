@@ -27,6 +27,7 @@ RetinexLR/
 ```
 
 ## 环境配置
+
 ### 快速验证（uv，CPU）
 
 仓库内置了可直接运行的示例配置 `configs/quickstart_cpu.yaml`，使用内置小数据集 `datasets/quickstart`，无需 GPU 即可完成冒烟训练：
