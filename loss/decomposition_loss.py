@@ -27,7 +27,7 @@ def gradient(maps, direction, device=None, kernel='sobel'):
     channels = maps.size()[1]
     if kernel == 'robert':
         smooth_kernel_x = Robert.expand(channels, channels, 2, 2)
-        maps = F.pad(maps, (0, 0, 1, 1))
+        maps = F.pad(maps, (0, 1, 0, 1))
     elif kernel == 'sobel':
         smooth_kernel_x = Sobel.expand(channels, channels, 3, 3)
         maps = F.pad(maps, (1, 1, 1, 1))
@@ -37,10 +37,10 @@ def gradient(maps, direction, device=None, kernel='sobel'):
     elif direction == "y":
         kernel = smooth_kernel_y
     kernel = kernel.to(device=device or maps.device)
-    gradient_orig = torch.abs(F.conv2d(maps, weight=kernel, padding=0))
+    gradient_orig = F.conv2d(maps, weight=kernel, padding=0).abs()
     grad_min = torch.min(gradient_orig)
     grad_max = torch.max(gradient_orig)
-    grad_norm = torch.div((gradient_orig - grad_min), (grad_max - grad_min + 0.0001))
+    grad_norm = (gradient_orig - grad_min) / (grad_max - grad_min + 1e-4)
     return grad_norm
 
 
@@ -48,7 +48,7 @@ def gradient_no_abs(maps, direction, device=None, kernel='sobel'):
     channels = maps.size()[1]
     if kernel == 'robert':
         smooth_kernel_x = Robert.expand(channels, channels, 2, 2)
-        maps = F.pad(maps, (0, 0, 1, 1))
+        maps = F.pad(maps, (0, 1, 0, 1))
     elif kernel == 'sobel':
         smooth_kernel_x = Sobel.expand(channels, channels, 3, 3)
         maps = F.pad(maps, (1, 1, 1, 1))
@@ -58,11 +58,7 @@ def gradient_no_abs(maps, direction, device=None, kernel='sobel'):
     elif direction == "y":
         kernel = smooth_kernel_y
     kernel = kernel.to(device=device or maps.device)
-    gradient_orig = torch.abs(F.conv2d(maps, weight=kernel, padding=0))
-    grad_min = torch.min(gradient_orig)
-    grad_max = torch.max(gradient_orig)
-    grad_norm = torch.div((gradient_orig - grad_min), (grad_max - grad_min + 0.0001))
-    return grad_norm
+    return F.conv2d(maps, weight=kernel, padding=0)
 
 
 class Decom_Loss(nn.Module):
@@ -83,7 +79,7 @@ class Decom_Loss(nn.Module):
             kernel = self.smooth_kernel_x
         elif direction == "y":
             kernel = self.smooth_kernel_y
-        grad_out = torch.abs(F.conv2d(input_tensor, kernel, stride=1, padding=1))
+        grad_out = F.conv2d(input_tensor, kernel, stride=1, padding=1).abs()
         return grad_out
 
     def ave_gradient(self, input_tensor, direction):
@@ -105,10 +101,10 @@ class Decom_Loss(nn.Module):
         self.recon_loss_high = F.l1_loss(R_high * L_high_3, I_high)
 
         # Cross-illumination consistency loss
-        avg_low = torch.max(I_low, dim=1, keepdim=True)[0]
-        avg_high = torch.max(I_high, dim=1, keepdim=True)[0]
-        self.recon_loss_crs_low = F.l1_loss(avg_high, L_high)
-        self.recon_loss_crs_high = F.l1_loss(avg_low, L_low)
+        max_low = torch.max(I_low, dim=1, keepdim=True)[0]
+        max_high = torch.max(I_high, dim=1, keepdim=True)[0]
+        self.recon_loss_crs_low = F.l1_loss(max_high, L_high)
+        self.recon_loss_crs_high = F.l1_loss(max_low, L_low)
 
         # BDSP structure preservation loss
         self.bdsp_loss = F.l1_loss(BDSP_Face(R_low), BDSP_Face(I_low)) + F.l1_loss(BDSP_Face(R_high), BDSP_Face(I_high))
@@ -133,10 +129,3 @@ class Decom_Loss(nn.Module):
                 self.bdsp_loss,
                 self.Ismooth_loss_low + self.Ismooth_loss_high,
                 self.self_recon_loss)
-
-
-def normalize_grad(gradient_orig):
-    grad_min = torch.min(gradient_orig)
-    grad_max = torch.max(gradient_orig)
-    grad_norm = torch.div((gradient_orig - grad_min), (grad_max - grad_min + 0.0001))
-    return grad_norm

@@ -10,11 +10,9 @@ eval.py
 import torch
 from PIL import Image
 from torchvision import transforms
-from models import DecomNet
 import numpy as np
 import cv2
 import os
-import random
 
 
 def main():
@@ -69,14 +67,12 @@ def main():
 def normalize_grad(gradient_orig):
     grad_min = torch.min(gradient_orig)
     grad_max = torch.max(gradient_orig)
-    grad_norm = torch.div((gradient_orig - grad_min), (grad_max - grad_min + 0.0001))
+    grad_norm = (gradient_orig - grad_min) / (grad_max - grad_min + 1e-4)
     return grad_norm
 
 
 def savepic(outputpic, name, flag):
-    outputpic[outputpic > 1.] = 1
-    outputpic[outputpic < 0.] = 0
-    outputpic = cv2.UMat(outputpic).get()
+    outputpic = np.clip(outputpic, 0.0, 1.0)
     outputpic = normalize_minmax(outputpic)
     outputpic = outputpic[:, :, ::-1]
 
@@ -103,8 +99,8 @@ def normalize_minmax(img, target_min=0, target_max=255):
 def loadfiles(root):
     images_path = []
     supported = [".jpg", ".JPG", ".png", ".PNG", ".bmp", ".BMP"]
-    images = [os.path.join(root, i) for i in os.listdir(root)
-              if os.path.splitext(i)[-1] in supported]
+    images = sorted([os.path.join(root, i) for i in os.listdir(root)
+                     if os.path.splitext(i)[-1] in supported])
     for index in range(len(images)):
         img_path = images[index]
         images_path.append(img_path)

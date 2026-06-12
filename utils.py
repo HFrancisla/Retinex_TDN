@@ -16,7 +16,6 @@ import random
 import torch
 from tqdm import tqdm
 
-import matplotlib.pyplot as plt
 import numpy as np
 import cv2
 
@@ -62,15 +61,24 @@ def read_data(root: str):
 
     val_high_root = os.path.join(val_root, "high")
     val_low_root = os.path.join(val_root, "low")
-    train_low_path = [os.path.join(train_low_root, i) for i in os.listdir(train_low_root)
-                  if os.path.splitext(i)[-1] in supported]
-    train_high_path = [os.path.join(train_high_root, i) for i in os.listdir(train_high_root)
-                  if os.path.splitext(i)[-1] in supported]
 
-    val_low_path = [os.path.join(val_low_root, i) for i in os.listdir(val_low_root)
-                  if os.path.splitext(i)[-1] in supported]
-    val_high_path = [os.path.join(val_high_root, i) for i in os.listdir(val_high_root)
-                  if os.path.splitext(i)[-1] in supported]
+    train_low_path = sorted(
+        [os.path.join(train_low_root, i) for i in os.listdir(train_low_root)
+         if os.path.splitext(i)[-1] in supported]
+    )
+    train_high_path = sorted(
+        [os.path.join(train_high_root, i) for i in os.listdir(train_high_root)
+         if os.path.splitext(i)[-1] in supported]
+    )
+
+    val_low_path = sorted(
+        [os.path.join(val_low_root, i) for i in os.listdir(val_low_root)
+         if os.path.splitext(i)[-1] in supported]
+    )
+    val_high_path = sorted(
+        [os.path.join(val_high_root, i) for i in os.listdir(val_high_root)
+         if os.path.splitext(i)[-1] in supported]
+    )
 
     assert len(train_low_path) == len(train_high_path), ' The length of train dataset does not match. low:{}, high:{}'.format(len(train_low_path), len(train_high_path))
     assert len(val_low_path) == len(val_high_path), ' The length of val dataset does not match. low:{}, high:{}'.format(len(val_low_path), len(val_high_path))
@@ -95,7 +103,7 @@ def read_data(root: str):
     print("{} low light images for validation.".format(len(val_low_path)))
     print("{} normal light images for validation ref.".format(len(val_high_path)))
 
-    return train_low_path, train_high_path, val_low_path, val_high_path
+    return train_images_low_path, train_images_high_path, val_images_low_path, val_images_high_path
 
 
 def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
@@ -116,6 +124,7 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
     optimizer.zero_grad()
 
     data_loader = tqdm(data_loader, file=sys.stdout)
+    lr = optimizer.param_groups[0]["lr"]
     for step, data in enumerate(data_loader):
         I_low, I_high = data
 
@@ -162,10 +171,13 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
         lr_scheduler.step()
         optimizer.zero_grad()
 
-    n = step + 1
-    return (accu_total_loss.item() / n, accu_recon_loss.item() / n,
-            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
-            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr)
+    step_count = max(step + 1, 1) if data_loader.iterable else 0
+    if step_count == 0:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, lr)
+
+    return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
+            accu_cross_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
+            accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count, lr)
 
 
 @torch.no_grad()
@@ -236,10 +248,13 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None
             accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
         )
 
-    n = step + 1
-    return (accu_total_loss.item() / n, accu_recon_loss.item() / n,
-            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
-            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n)
+    step_count = max(step + 1, 1) if data_loader.iterable else 0
+    if step_count == 0:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
+            accu_cross_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
+            accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count)
 
 
 def create_lr_scheduler(optimizer,
@@ -252,12 +267,17 @@ def create_lr_scheduler(optimizer,
     if warmup is False:
         warmup_epochs = 0
 
+    warmup_steps = warmup_epochs * num_step
+    total_steps = max((epochs - warmup_epochs) * num_step, 1)
+
     def f(x):
-        if warmup is True and x <= (warmup_epochs * num_step):
-            alpha = float(x) / (warmup_epochs * num_step)
-            return warmup_factor * (1 - alpha) + alpha
-        else:
-            return (1 - (x - warmup_epochs * num_step) / ((epochs - warmup_epochs) * num_step)) ** 0.9
+        if warmup and x <= warmup_steps:
+            alpha = float(x) / float(warmup_steps)
+            return warmup_factor * (1.0 - alpha) + alpha
+
+        post_step = x - warmup_steps
+        ratio = min(max(post_step / total_steps, 0.0), 1.0)
+        return max((1.0 - ratio) ** 0.9, 0.0)
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=f)
 

@@ -18,7 +18,7 @@ experiment:
 
 # ---- 数据配置 ----
 data:
-  path: "datasets/LOLv2"
+  path: "datasets/LOLv2/Real_captured"
   crop_size: 256
   batch_size: 2
   num_workers: 0
