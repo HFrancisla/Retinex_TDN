@@ -27,14 +27,15 @@ data:
 model:
   name: "DecomNet"
   use_dp: false
-  gpu_id: "2"
+  gpu_id: "0"
 
 # ---- 训练配置 ----
 training:
   epochs: 300
   lr: 0.0001
   warmup: true
-  save_interval: 20          # 每 N 个 epoch 保存一次权重
+  save_interval: null         # null=不定期保存, int=每N个epoch保存一次
+  save_best: true             # 自动保存验证集最优指标的权重
 
 # ---- 损失权重 ----
 # 对应 decomposition_loss.py 中的权重

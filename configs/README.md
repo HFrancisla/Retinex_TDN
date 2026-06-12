@@ -67,7 +67,7 @@ data:
 model:
   name: "DecomNet"          # 模型名称
   use_dp: false             # 是否使用 DataParallel
-  gpu_id: "2"               # GPU 编号
+  gpu_id: "0"               # GPU 编号
 ```
 
 ### training - 训练配置

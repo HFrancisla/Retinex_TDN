@@ -23,7 +23,7 @@ Sobel = torch.Tensor(Sobel)
 Robert = torch.Tensor(Robert)
 
 
-def gradient(maps, direction, device='cuda', kernel='sobel'):
+def gradient(maps, direction, device=None, kernel='sobel'):
     channels = maps.size()[1]
     if kernel == 'robert':
         smooth_kernel_x = Robert.expand(channels, channels, 2, 2)
@@ -36,7 +36,7 @@ def gradient(maps, direction, device='cuda', kernel='sobel'):
         kernel = smooth_kernel_x
     elif direction == "y":
         kernel = smooth_kernel_y
-    kernel = kernel.to(device=device)
+    kernel = kernel.to(device=device or maps.device)
     gradient_orig = torch.abs(F.conv2d(maps, weight=kernel, padding=0))
     grad_min = torch.min(gradient_orig)
     grad_max = torch.max(gradient_orig)
@@ -44,7 +44,7 @@ def gradient(maps, direction, device='cuda', kernel='sobel'):
     return grad_norm
 
 
-def gradient_no_abs(maps, direction, device='cuda', kernel='sobel'):
+def gradient_no_abs(maps, direction, device=None, kernel='sobel'):
     channels = maps.size()[1]
     if kernel == 'robert':
         smooth_kernel_x = Robert.expand(channels, channels, 2, 2)
@@ -57,7 +57,7 @@ def gradient_no_abs(maps, direction, device='cuda', kernel='sobel'):
         kernel = smooth_kernel_x
     elif direction == "y":
         kernel = smooth_kernel_y
-    kernel = kernel.to(device=device)
+    kernel = kernel.to(device=device or maps.device)
     gradient_orig = torch.abs(F.conv2d(maps, weight=kernel, padding=0))
     grad_min = torch.min(gradient_orig)
     grad_max = torch.max(gradient_orig)
@@ -76,7 +76,7 @@ class Decom_Loss(nn.Module):
         self.self_recon_weight = self_recon_weight
 
     def gradient(self, input_tensor, direction):
-        self.smooth_kernel_x = torch.FloatTensor([[0, 0], [-1, 1]]).view((1, 1, 2, 2)).cuda()
+        self.smooth_kernel_x = torch.FloatTensor([[0, 0], [-1, 1]]).view((1, 1, 2, 2)).to(input_tensor.device)
         self.smooth_kernel_y = torch.transpose(self.smooth_kernel_x, 2, 3)
 
         if direction == "x":

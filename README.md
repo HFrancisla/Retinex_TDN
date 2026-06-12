@@ -27,6 +27,17 @@ RetinexLR/
 ```
 
 ## 环境配置
+### 快速验证（uv，CPU）
+
+仓库内置了可直接运行的示例配置 `configs/quickstart_cpu.yaml`，使用内置小数据集 `datasets/quickstart`，无需 GPU 即可完成冒烟训练：
+
+```bash
+uv venv
+uv pip install -r requirements.txt
+MPLBACKEND=Agg uv run python train.py --config configs/quickstart_cpu.yaml
+```
+
+> 注意：`requirements.txt` 已包含 `torch` / `torchvision`。若平台需要特定 CUDA 构建，请按 PyTorch 官方指引覆盖安装。
 
 项目使用 [uv](https://docs.astral.sh/uv/) 管理 Python 环境和依赖。
 
@@ -80,7 +91,7 @@ python train.py \
 | `--weights` | `''` | 预训练权重路径 |
 | `--resume` | `''` | 恢复训练的 checkpoint 路径 |
 | `--use_dp` | False | 是否使用 DataParallel 多卡训练 |
-| `--gpu_id` | `'2'` | 可见 GPU 编号 |
+| `--gpu_id` | `'0'` | 可见 GPU 编号 |
 
 训练输出保存至 `experiments/<实验名>/`，包含 `weights/`、`img/`（中间可视化）、`log/`（TensorBoard 日志）。
 
@@ -115,10 +126,12 @@ python -m scripts.eval
 ## 网络架构
 
 **DecomNet** 接收低光图像，输出：
+
 - **R**：反射分量（Reflectance），经 sigmoid 约束至 [0, 1]
 - **L**：光照标量（Illumination），经 sigmoid 约束至 [0, 1]，广播至与输入同尺寸
 
 核心组件：
+
 - **TDN backbone**：U-Net 结构的 Transformer 编码器-解码器，3 级多尺度特征提取
 - **DWT-FSA Attention**：基于离散小波变换的频域自注意力，LL 子带做 C×C 多头注意力，高频子带做 sigmoid 门控
 - **DWT-FFN**：小波域前馈网络，仅处理 LL 子带，高频旁路直通

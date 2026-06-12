@@ -87,7 +87,8 @@ def main(args):
                 "epochs": args.epochs,
                 "lr": args.lr,
                 "warmup": True,
-                "save_interval": 20
+                "save_interval": 20,
+                "save_best": True
             },
             "loss": {
                 "recon_weight": 20,
@@ -113,7 +114,8 @@ def main(args):
     device_str = cfg.get("device", "cuda")
 
     # ---- 设备设置 ----
-    os.environ['CUDA_VISIBLE_DEVICES'] = model_cfg.get("gpu_id", "2")
+    if "cuda" in device_str:
+        os.environ['CUDA_VISIBLE_DEVICES'] = model_cfg.get("gpu_id", "0")
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
 
     # ---- 生成实验目录名 ----
@@ -219,7 +221,8 @@ def main(args):
         print(f"Resumed from checkpoint: epoch {start_epoch}")
 
     # ---- 训练循环 ----
-    save_interval = train_cfg.get("save_interval", 20)
+    save_interval = train_cfg.get("save_interval", None)   # None=不定期保存
+    save_best = train_cfg.get("save_best", True)
     for epoch in range(start_epoch, epochs):
         train_loss, train_recon_loss, train_cross_loss, \
         train_bdsp_loss, train_smooth_loss, train_self_recon_loss, lr = train_one_epoch(
@@ -247,8 +250,8 @@ def main(args):
         tb_writer.add_scalar("val/smooth_loss", val_smooth_loss, epoch)
         tb_writer.add_scalar("val/self_recon_loss", val_self_recon_loss, epoch)
 
-        # 保存最佳模型
-        if val_loss < best_valloss:
+        # 保存最佳模型（由 save_best 开关控制，默认开启）
+        if save_best and val_loss < best_valloss:
             best_valloss = val_loss
             best_save_path = os.path.join(file_weights_path, "best_model.pth")
             torch.save({
@@ -261,8 +264,8 @@ def main(args):
             }, best_save_path)
             print(f"Saved best model at epoch {epoch} with val_loss: {val_loss:.4f}")
 
-        # 定期保存 checkpoint
-        if epoch % save_interval == 0:
+        # 定期保存 checkpoint（save_interval 为 null 时跳过）
+        if save_interval is not None and epoch % save_interval == 0:
             save_file = {
                 "model": model.module.state_dict() if use_dp else model.state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -295,7 +298,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--use_dp', default=False, help='use dp-multigpus')
     parser.add_argument('--device', default='cuda', help='device id (i.e. 0 or 0,1 or cpu)')
-    parser.add_argument('--gpu_id', default='2', help='device id (i.e. 0, 1, 2 or 3)')
+    parser.add_argument('--gpu_id', default='0', help='device id (i.e. 0, 1, 2 or 3)')
 
     opt = parser.parse_args()
     main(opt)
