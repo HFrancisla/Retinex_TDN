@@ -1,3 +1,12 @@
+"""
+data/transforms.py
+
+配对图像数据增强。
+
+所有变换均接收 (image, target) 双张量，保证 low-high 图像同步变换。
+支持随机裁剪、水平/垂直翻转、缩放、居中裁剪及转 Tensor。
+"""
+
 import numpy as np
 import random
 
@@ -69,6 +78,7 @@ class RandomCrop(object):
         image = F.crop(image, *crop_params)
         target = F.crop(target, *crop_params)
         return image, target
+
 
 class CenterCrop(object):
     def __init__(self, size):

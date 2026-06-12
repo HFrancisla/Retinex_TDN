@@ -1,3 +1,15 @@
+"""
+train.py
+
+Retinex 分解模型训练入口。
+
+解析命令行参数，加载配对数据集，构建 DecomNet 及优化器，
+执行训练-验证循环并保存权重、TensorBoard 日志与中间可视化结果。
+
+用法示例：
+    python train.py --data-path /path/to/dataset --epochs 300 --batch-size 2 --lr 0.0001
+"""
+
 import os
 import argparse
 
@@ -6,13 +18,11 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
-from my_dataset import MyDataSet
-
-from TDN_network import DecomNet as create_model
+from data import MyDataSet, transforms as T
+from models import DecomNet
 from utils import read_data, train_one_epoch, evaluate, create_lr_scheduler
 import datetime
 
-import transforms as T
 
 def main(args):
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
@@ -71,7 +81,7 @@ def main(args):
                                              num_workers=0,
                                              collate_fn=val_dataset.collate_fn)
 
-    model = create_model().to(device)
+    model = DecomNet().to(device)
     if args.use_dp == True:
         model = torch.nn.DataParallel(model).cuda()
 
@@ -79,7 +89,6 @@ def main(args):
         assert os.path.exists(args.weights), "weights file: '{}' not exist.".format(args.weights)
         weights_dict = torch.load(args.weights, map_location=device)["model"]
         print(model.load_state_dict(weights_dict, strict=False))
-
 
     pg = [p for p in model.parameters() if p.requires_grad]
     optimizer = optim.Adam(pg, lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=5E-5)
@@ -90,9 +99,9 @@ def main(args):
         model.load_state_dict(checkpoint['model'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         start_epoch = checkpoint['epoch'] + 1
+
     save_epoch = 20
     for epoch in range(start_epoch, args.epochs):
-        # train
         train_loss, train_rec_loss, train_equal_R_loss, \
         train_smooth_high_loss, lr = train_one_epoch(model=model,
                                                 optimizer=optimizer,
@@ -101,7 +110,6 @@ def main(args):
                                                 device=device,
                                                 epoch=epoch)
 
-        # validate
         val_loss, val_rec_loss, val_equal_R_loss, \
         val_smooth_high_loss = evaluate(model=model,
                                      data_loader=val_loader,
@@ -132,7 +140,6 @@ def main(args):
                              "epoch": epoch,
                              "args": args}
             torch.save(save_file, file_weights_path + "/" + "checkpoint_Diff_TDN_{}.pth".format(epoch))
-
 
 
 if __name__ == '__main__':

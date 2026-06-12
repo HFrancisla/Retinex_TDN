@@ -1,3 +1,11 @@
+"""
+data/dataset.py
+
+配对图像数据集。
+
+加载低光/正常光（low-high）成对的 RGB 图像，供训练与验证使用。
+"""
+
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
@@ -28,7 +36,6 @@ class MyDataSet(Dataset):
     @staticmethod
     def collate_fn(batch):
         images, images_ref = tuple(zip(*batch))
-
         images = torch.stack(images, dim=0)
         images_ref = torch.stack(images_ref, dim=0)
         return images, images_ref
