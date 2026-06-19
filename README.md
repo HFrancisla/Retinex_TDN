@@ -70,7 +70,11 @@ uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu
     └── high/      # 正常光测试图像（GT）
 ```
 
-图像格式支持 `.jpg` / `.png`，low 与 high 文件夹中的图像需一一对应。
+图像格式支持 `.jpg` / `.png`。
+
+训练模式通过配置 `data.mode` 控制：
+- `"paired"`（默认）：low 与 high 文件夹中的图像需一一对应，数据增强同步施加。
+- `"unpaired"`：low 与 high 图像各自独立加载，每张 low 图随机匹配一张 high 图，数据增强独立施加。
 
 ## 训练
 
@@ -137,4 +141,4 @@ python -m scripts.eval
 - **DWT-FSA Attention**：基于离散小波变换的频域自注意力，LL 子带做 C×C 多头注意力，高频子带做 sigmoid 门控
 - **DWT-FFN**：小波域前馈网络，仅处理 LL 子带，高频旁路直通
 
-损失函数包含重建损失（R×L ≈ I）、交叉光照一致性、BDSP 结构保持和光照平滑约束。
+损失函数包含重建损失（R×L ≈ I）、光照锚定、BDSP 结构保持和光照平滑约束。

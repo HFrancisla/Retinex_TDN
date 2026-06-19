@@ -24,7 +24,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
-from data import MyDataSet, transforms as T
+from data import MyDataSet, UnpairedDataSet, transforms as T
 from models import DecomNet
 from utils import read_data, train_one_epoch, evaluate, create_lr_scheduler, load_config
 
@@ -33,10 +33,8 @@ def generate_experiment_name(cfg):
     """
     根据配置生成实验目录名。
 
-    如果 auto_name=true，自动生成基于关键参数的名称：
-        {name}_{recon}r_{cross}cr_{bdsp}bdsp_{sr}sr[_{tag}]
-
-    否则使用手动指定的 name。
+    auto_name=true 时：{name}_{mode}[_{tag}]
+    mode 取 loss.mode，缺省跟随 data.mode。
     """
     exp_cfg = cfg.get("experiment", {})
     name = exp_cfg.get("name", "exp")
@@ -45,13 +43,9 @@ def generate_experiment_name(cfg):
 
     if auto_name:
         loss_cfg = cfg.get("loss", {})
-        recon = loss_cfg.get("recon_weight", 20)
-        cross = loss_cfg.get("cross_recon_weight", 1)
-        bdsp = loss_cfg.get("bdsp_weight", 1)
-        self_recon = loss_cfg.get("self_recon_weight", 1)
-
-        loss_tag = f"{recon}r_{cross}cr_{bdsp}bdsp_{self_recon}sr"
-        name = f"{name}_{loss_tag}"
+        data_cfg = cfg.get("data", {})
+        mode = loss_cfg.get("mode", data_cfg.get("mode", "unpaired"))
+        name = f"{name}_{mode}"
 
     if tag:
         name = f"{name}_{tag}"
@@ -74,6 +68,7 @@ def main(args):
             },
             "data": {
                 "path": args.data_path,
+                "mode": args.mode,
                 "crop_size": 256,
                 "batch_size": args.batch_size,
                 "num_workers": 0
@@ -91,11 +86,11 @@ def main(args):
                 "save_best": True
             },
             "loss": {
-                "recon_weight": 20,
-                "cross_recon_weight": 1,
-                "bdsp_weight": 1,
+                "recon_weight": 1,
+                "anchor_weight": 0.05,
+                "bdsp_weight": 0.05,
                 "smooth_weight": 0,
-                "self_recon_weight": 1
+                "self_recon_weight": 0.05
             },
             "resume": {
                 "checkpoint": args.resume,
@@ -110,6 +105,8 @@ def main(args):
     model_cfg = cfg.get("model", {})
     train_cfg = cfg.get("training", {})
     loss_cfg = cfg.get("loss", {})
+    if "mode" not in loss_cfg:
+        loss_cfg["mode"] = data_cfg.get("mode", "unpaired")
     resume_cfg = cfg.get("resume", {})
     device_str = cfg.get("device", "cuda")
 
@@ -151,24 +148,40 @@ def main(args):
 
     # ---- 加载数据 ----
     data_path = data_cfg.get("path", "")
-    train_low_path, train_high_path, val_low_path, val_high_path = read_data(data_path)
+    data_mode = data_cfg["mode"]
+    train_low_path, train_high_path, val_low_path, val_high_path = read_data(data_path, mode=data_mode)
 
     crop_size = data_cfg.get("crop_size", 256)
-    data_transform = {
-        "train": T.Compose([T.RandomCrop(crop_size),
-                            T.RandomHorizontalFlip(0.5),
-                            T.RandomVerticalFlip(0.5),
-                            T.ToTensor()]),
-        "val": T.Compose([T.ToTensor()])
-    }
+    if data_mode == "paired":
+        data_transform = {
+            "train": T.Compose([T.RandomCrop(crop_size),
+                                T.RandomHorizontalFlip(0.5),
+                                T.RandomVerticalFlip(0.5),
+                                T.ToTensor()]),
+            "val": T.Compose([T.ToTensor()])
+        }
+        train_dataset = MyDataSet(images_low_path=train_low_path,
+                                  images_high_path=train_high_path,
+                                  transform=data_transform["train"])
+        val_dataset = MyDataSet(images_low_path=val_low_path,
+                                images_high_path=val_high_path,
+                                transform=data_transform["val"])
+    else:
+        from torchvision import transforms as torchvision_T
+        data_transform = {
+            "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size),
+                                              torchvision_T.RandomHorizontalFlip(0.5),
+                                              torchvision_T.RandomVerticalFlip(0.5),
+                                              torchvision_T.ToTensor()]),
+            "val": torchvision_T.Compose([torchvision_T.ToTensor()])
+        }
+        train_dataset = UnpairedDataSet(images_low_path=train_low_path,
+                                        images_high_path=train_high_path,
+                                        transform=data_transform["train"])
+        val_dataset = UnpairedDataSet(images_low_path=val_low_path,
+                                      images_high_path=val_high_path,
+                                      transform=data_transform["val"])
 
-    train_dataset = MyDataSet(images_low_path=train_low_path,
-                              images_high_path=train_high_path,
-                              transform=data_transform["train"])
-
-    val_dataset = MyDataSet(images_low_path=val_low_path,
-                            images_high_path=val_high_path,
-                            transform=data_transform["val"])
 
     batch_size = data_cfg.get("batch_size", 2)
     num_workers = data_cfg.get("num_workers", 0)
@@ -224,13 +237,13 @@ def main(args):
     save_interval = train_cfg.get("save_interval", None)   # None=不定期保存
     save_best = train_cfg.get("save_best", True)
     for epoch in range(start_epoch, epochs):
-        train_loss, train_recon_loss, train_cross_loss, \
+        train_loss, train_recon_loss, train_anchor_loss, \
         train_bdsp_loss, train_smooth_loss, train_self_recon_loss, lr = train_one_epoch(
             model=model, optimizer=optimizer, data_loader=train_loader,
             lr_scheduler=lr_scheduler, device=device, epoch=epoch,
             loss_cfg=loss_cfg)
 
-        val_loss, val_recon_loss, val_cross_loss, \
+        val_loss, val_recon_loss, val_anchor_loss, \
         val_bdsp_loss, val_smooth_loss, val_self_recon_loss = evaluate(
             model=model, data_loader=val_loader, device=device,
             epoch=epoch, lr=lr, filefold_path=file_img_path,
@@ -238,14 +251,14 @@ def main(args):
 
         tb_writer.add_scalar("train/total_loss", train_loss, epoch)
         tb_writer.add_scalar("train/recon_loss", train_recon_loss, epoch)
-        tb_writer.add_scalar("train/cross_recon_loss", train_cross_loss, epoch)
+        tb_writer.add_scalar("train/anchor_loss", train_anchor_loss, epoch)
         tb_writer.add_scalar("train/bdsp_loss", train_bdsp_loss, epoch)
         tb_writer.add_scalar("train/smooth_loss", train_smooth_loss, epoch)
         tb_writer.add_scalar("train/self_recon_loss", train_self_recon_loss, epoch)
 
         tb_writer.add_scalar("val/total_loss", val_loss, epoch)
         tb_writer.add_scalar("val/recon_loss", val_recon_loss, epoch)
-        tb_writer.add_scalar("val/cross_recon_loss", val_cross_loss, epoch)
+        tb_writer.add_scalar("val/anchor_loss", val_anchor_loss, epoch)
         tb_writer.add_scalar("val/bdsp_loss", val_bdsp_loss, epoch)
         tb_writer.add_scalar("val/smooth_loss", val_smooth_loss, epoch)
         tb_writer.add_scalar("val/self_recon_loss", val_self_recon_loss, epoch)
@@ -293,6 +306,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--data-path', type=str,
                         default="datasets/LOLv2")
+    parser.add_argument("--mode", type=str, default="paired", choices=["paired", "unpaired"], help="data loading mode")
     parser.add_argument('--weights', type=str, default='',
                         help='initial weights path')
     parser.add_argument('--resume', default='', help='resume from checkpoint')

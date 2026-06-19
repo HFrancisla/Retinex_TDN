@@ -1,5 +1,5 @@
 # LOL 数据集实验 - 基础配置
-# 损失权重: recon=20, cross_recon=1, bdsp=1, smooth=0, self_recon=1
+# 损失权重: recon=20, anchor=1, bdsp=1, smooth=0, self_recon=1
 
 experiment:
   name: "lol_baseline"
@@ -7,6 +7,7 @@ experiment:
   tag: ""
 
 data:
+  mode: "paired"
   path: "datasets/LOLv2"
   crop_size: 256
   batch_size: 2
@@ -25,11 +26,11 @@ training:
   save_best: true
 
 loss:
-  recon_weight: 20
-  cross_recon_weight: 1
-  bdsp_weight: 1
+  recon_weight: 1
+  anchor_weight: 0.05
+  bdsp_weight: 0.05
   smooth_weight: 0
-  self_recon_weight: 1
+  self_recon_weight: 0.05
 
 resume:
   checkpoint: ""

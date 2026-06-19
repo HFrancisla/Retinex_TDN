@@ -19,7 +19,7 @@ from tqdm import tqdm
 import numpy as np
 import cv2
 
-from loss import Decom_Loss
+from loss import PairedLoss, UnpairedLoss
 
 
 def load_config(config_path: str) -> dict:
@@ -42,7 +42,22 @@ def load_config(config_path: str) -> dict:
     return cfg
 
 
-def read_data(root: str):
+def _build_loss_function(loss_cfg):
+    """根据 loss_cfg 构建损失模块。
+
+    loss_cfg 中的 'mode' 字段决定使用哪套损失：
+    - 'paired' -> PairedLoss
+    - 'unpaired' -> UnpairedLoss
+    其余字段透传给对应损失类的 __init__。
+    """
+    cfg = dict(loss_cfg or {})
+    mode = cfg.pop('mode', 'unpaired')
+    if mode == 'paired':
+        return PairedLoss(**cfg)
+    return UnpairedLoss(**cfg)
+
+
+def read_data(root: str, mode: str):
     assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
 
     train_root = os.path.join(root, "train")
@@ -80,21 +95,17 @@ def read_data(root: str):
          if os.path.splitext(i)[-1] in supported]
     )
 
-    assert len(train_low_path) == len(train_high_path), ' The length of train dataset does not match. low:{}, high:{}'.format(len(train_low_path), len(train_high_path))
-    assert len(val_low_path) == len(val_high_path), ' The length of val dataset does not match. low:{}, high:{}'.format(len(val_low_path), len(val_high_path))
-    print("image pair check finish")
+    if mode == "paired":
+        assert len(train_low_path) == len(train_high_path), "The length of train dataset does not match. low:{}, high:{}".format(len(train_low_path), len(train_high_path))
+        assert len(val_low_path) == len(val_high_path), "The length of val dataset does not match. low:{}, high:{}".format(len(val_low_path), len(val_high_path))
+        print("image pair check finish")
+    else:
+        print("unpaired mode: low({}) and high({}) loaded independently".format(len(train_low_path), len(train_high_path)))
+    train_images_low_path = list(train_low_path)
+    train_images_high_path = list(train_high_path)
+    val_images_low_path = list(val_low_path)
+    val_images_high_path = list(val_high_path)
 
-    for index in range(len(train_low_path)):
-        img_low_path = train_low_path[index]
-        img_high_path = train_high_path[index]
-        train_images_low_path.append(img_low_path)
-        train_images_high_path.append(img_high_path)
-
-    for index in range(len(val_low_path)):
-        img_low_path = val_low_path[index]
-        img_high_path = val_high_path[index]
-        val_images_low_path.append(img_low_path)
-        val_images_high_path.append(img_high_path)
 
     total_dataset_nums = len(train_low_path) + len(train_high_path) + len(val_low_path) + len(val_high_path)
     print("{} images were found in the dataset.".format(total_dataset_nums))
@@ -108,15 +119,14 @@ def read_data(root: str):
 
 def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
     model.train()
-    loss_cfg = loss_cfg or {}
-    loss_function = Decom_Loss(**loss_cfg)
+    loss_function = _build_loss_function(loss_cfg)
 
     if torch.cuda.is_available():
         loss_function = loss_function.to(device)
 
     accu_total_loss = torch.zeros(1).to(device)
     accu_recon_loss = torch.zeros(1).to(device)
-    accu_cross_loss = torch.zeros(1).to(device)
+    accu_anchor_loss = torch.zeros(1).to(device)
     accu_bdsp_loss = torch.zeros(1).to(device)
     accu_smooth_loss = torch.zeros(1).to(device)
     accu_self_recon_loss = torch.zeros(1).to(device)
@@ -135,17 +145,22 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
         R_low, L_low = model(I_low)
         R_high, L_high = model(I_high)
 
-        _, L_R_low = model(R_low)
-        _, L_R_high = model(R_high)
+        # Skip extra forward pass when self_recon_weight == 0
+        if loss_function.self_recon_weight > 0:
+            _, L_R_low = model(R_low)
+            _, L_R_high = model(R_high)
+        else:
+            L_R_low = None
+            L_R_high = None
 
-        loss, loss_recon, loss_cross, loss_bdsp, loss_smooth, loss_self_recon = \
+        loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
             loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
         loss.backward()
 
         accu_total_loss += loss.detach()
         accu_recon_loss += loss_recon.detach()
-        accu_cross_loss += loss_cross.detach()
+        accu_anchor_loss += loss_anchor.detach()
         accu_bdsp_loss += loss_bdsp.detach()
         accu_smooth_loss += loss_smooth.detach()
         accu_self_recon_loss += loss_self_recon.detach()
@@ -154,12 +169,12 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
 
         n = step + 1
         data_loader.desc = (
-            "[train epoch {}] total: {:.3f}  recon: {:.3f}  cross: {:.3f}  "
+            "[train epoch {}] total: {:.3f}  recon: {:.3f}  anchor: {:.3f}  "
             "bdsp: {:.3f}  smooth: {:.3f}  self-recon: {:.3f}  lr: {:.6f}"
         ).format(
             epoch,
             accu_total_loss.item() / n, accu_recon_loss.item() / n,
-            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
+            accu_anchor_loss.item() / n, accu_bdsp_loss.item() / n,
             accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
         )
 
@@ -176,20 +191,19 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, lr)
 
     return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
-            accu_cross_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
+            accu_anchor_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
             accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count, lr)
 
 
 @torch.no_grad()
 def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None):
-    loss_cfg = loss_cfg or {}
-    loss_function = Decom_Loss(**loss_cfg)
+    loss_function = _build_loss_function(loss_cfg)
 
     model.eval()
 
     accu_total_loss = torch.zeros(1).to(device)
     accu_recon_loss = torch.zeros(1).to(device)
-    accu_cross_loss = torch.zeros(1).to(device)
+    accu_anchor_loss = torch.zeros(1).to(device)
     accu_bdsp_loss = torch.zeros(1).to(device)
     accu_smooth_loss = torch.zeros(1).to(device)
     accu_self_recon_loss = torch.zeros(1).to(device)
@@ -214,8 +228,13 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None
         R_low, L_low = model(I_low)
         R_high, L_high = model(I_high)
 
-        _, L_R_low = model(R_low)
-        _, L_R_high = model(R_high)
+        # Skip extra forward pass when self_recon_weight == 0
+        if loss_function.self_recon_weight > 0:
+            _, L_R_low = model(R_low)
+            _, L_R_high = model(R_high)
+        else:
+            L_R_low = None
+            L_R_high = None
 
         if epoch % save_epoch == 0:
             R_low_img = tensor2numpy_R(R_low)
@@ -227,24 +246,24 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None
             save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
             save_pic(L_high_img, evalfold_path, str(step) + "_L_high")
 
-        loss, loss_recon, loss_cross, loss_bdsp, loss_smooth, loss_self_recon = \
+        loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
             loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
         accu_total_loss += loss
         accu_recon_loss += loss_recon
-        accu_cross_loss += loss_cross
+        accu_anchor_loss += loss_anchor
         accu_bdsp_loss += loss_bdsp
         accu_smooth_loss += loss_smooth
         accu_self_recon_loss += loss_self_recon
 
         n = step + 1
         data_loader.desc = (
-            "[val epoch {}] total: {:.3f}  recon: {:.3f}  cross: {:.3f}  "
+            "[val epoch {}] total: {:.3f}  recon: {:.3f}  anchor: {:.3f}  "
             "bdsp: {:.3f}  smooth: {:.3f}  self-recon: {:.3f}  lr: {:.6f}"
         ).format(
             epoch,
             accu_total_loss.item() / n, accu_recon_loss.item() / n,
-            accu_cross_loss.item() / n, accu_bdsp_loss.item() / n,
+            accu_anchor_loss.item() / n, accu_bdsp_loss.item() / n,
             accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
         )
 
@@ -253,7 +272,7 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
-            accu_cross_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
+            accu_anchor_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
             accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count)
 
 

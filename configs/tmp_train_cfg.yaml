@@ -1,4 +1,5 @@
 data:
+  mode: paired
   batch_size: 4
   crop_size: 32
   num_workers: 0
@@ -9,10 +10,10 @@ experiment:
   name: quickstart_cpu
   tag: ''
 loss:
-  bdsp_weight: 1
-  cross_recon_weight: 1
-  recon_weight: 20
-  self_recon_weight: 1
+  bdsp_weight: 0.05          
+  anchor_weight: 0.05        
+  recon_weight: 1            
+  self_recon_weight: 0.05    
   smooth_weight: 0
 model:
   gpu_id: ''

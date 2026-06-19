@@ -44,18 +44,19 @@ experiment:
 **auto_name 说明：**
 
 - `false`: 使用 `name` 字段作为目录名
-- `true`: 自动生成基于损失权重的名称，格式：`{name}_{recon}r_{cross}cr_{eqR}eqR_{r_l}rl[_{tag}]`
+- `true`: 自动生成基于损失权重的名称，格式：`{name}_{recon}r_{anchor}an_{bdsp}bdsp_{sr}sr[_{tag}]`
 
 **示例：**
 
 - `auto_name: false`, `name: "my_exp"` → 目录名：`my_exp_20250101-120000`
-- `auto_name: true`, `name: "lol"`, 损失权重 recon=20, cross=1, eqR=1, r_l=1 → 目录名：`lol_20r_1cr_1eqR_1rl_20250101-120000`
+- `auto_name: true`, `name: "lol"`, `loss.mode` 为 `paired` 时 → 目录名：`lol_paired_20250101-120000`；`unpaired` 时 → `lol_unpaired_20250101-120000`
 
 ### data - 数据配置
 
 ```yaml
 data:
   path: "datasets/LOLv2"  # 数据集路径
+  mode: "paired"            # 训练模式: "paired"（配对）或 "unpaired"（非配对）
   crop_size: 256                    # 随机裁剪大小
   batch_size: 2                     # 批次大小
   num_workers: 0                    # 数据加载线程数
@@ -84,10 +85,22 @@ training:
 
 ```yaml
 loss:
-  recon_weight: 20          # 重建损失权重 (R * L ≈ I)
-  cross_recon_weight: 1     # 交叉光照一致性损失权重
-  equal_r_weight: 1         # R 通道均衡损失权重
-  r_l_weight: 1             # 光照一致性损失权重
+  mode: "paired"            # 可选："paired" / "unpaired"；不写则跟随 data.mode
+
+  # paired 模式参数（参考 Diff-TDN 风格）
+  recon_weight_high: 1.0
+  recon_weight_low: 0.3
+  cross_recon_weight_low: 0.001
+  cross_recon_weight_high: 0.001
+  smooth_weight: 0.1
+  equal_r_weight: 0.1
+
+  # unpaired 模式参数（当前项目默认风格）
+  # recon_weight: 1
+  # anchor_weight: 0.05
+  # bdsp_weight: 0.05
+  # smooth_weight: 0
+  # self_recon_weight: 0.05
 ```
 
 ### resume - 恢复训练
@@ -104,7 +117,7 @@ resume:
 
 ```
 experiments/
-└── lol_20r_1cr_1eqR_1rl_20250101-120000/
+└── lol_20r_1an_1bdsp_1sr_20250101-120000/
     ├── config.yaml          # 保存的配置文件（便于复现）
     ├── img/                 # 可视化结果
     │   ├── 0/               # epoch 0 的结果
@@ -132,7 +145,7 @@ python train.py --config configs/my_new_exp.yaml
 
 ## 最佳实践
 
-1. **使用 auto_name**: 设置 `auto_name: true` 可以自动生成包含关键参数的目录名，便于区分不同实验
+1. **使用 auto_name**: 设置 `auto_name: true` 时，目录名会自动带 `paired/unpaired`（来自 `loss.mode`，默认跟 `data.mode`），便于快速区分实验
 2. **添加 tag**: 使用 `tag` 字段标记特殊实验，如 `"v2"`, `"ablation_recon10"`, `"debug"`
 3. **保存配置**: 训练时会自动将配置保存到实验目录，便于复现
 4. **版本控制**: 建议将配置文件纳入版本控制，便于追踪实验历史

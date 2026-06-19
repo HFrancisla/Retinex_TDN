@@ -1,2 +1,2 @@
-from .decomposition_loss import Decom_Loss
+from .decomposition_loss import PairedLoss, UnpairedLoss
 from .bsdp import BDSP_Face

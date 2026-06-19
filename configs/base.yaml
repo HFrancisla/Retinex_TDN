@@ -18,6 +18,7 @@ experiment:
 
 # ---- 数据配置 ----
 data:
+  mode: "paired"            # 训练模式: "paired"（配对）或 "unpaired"（非配对）
   path: "datasets/LOLv2/Real_captured"
   crop_size: 256
   batch_size: 2
@@ -40,11 +41,23 @@ training:
 # ---- 损失权重 ----
 # 对应 decomposition_loss.py 中的权重
 loss:
-  recon_weight: 20            # 重建损失权重 (Reconstruction Loss)
-  cross_recon_weight: 1       # 交叉光照一致性损失权重 (Cross-Illumination Consistency)
-  bdsp_weight: 1              # BDSP 结构保持损失权重 (Structure Preservation)
+  # 不写 mode 时，会自动跟随 data.mode：paired -> PairedLoss，unpaired -> UnpairedLoss
+  # mode: "paired"
+
+  # ---- paired 模式参数（参考 Diff-TDN 风格） ----
+  # recon_weight_high: 1.0
+  # recon_weight_low: 0.3
+  # cross_recon_weight_low: 0.001
+  # cross_recon_weight_high: 0.001
+  # smooth_weight: 0.1
+  # equal_r_weight: 0.1
+
+  # ---- unpaired 模式参数（当前配置） ----
+  recon_weight: 1            # 重建损失权重 (Reconstruction Loss)
+  anchor_weight: 0.05        # 光照锚定损失权重 (Illumination Anchoring)
+  bdsp_weight: 0.05          # BDSP 结构保持损失权重 (Structure Preservation)
   smooth_weight: 0            # 光照平滑损失权重 (Illumination Smoothness)
-  self_recon_weight: 1        # 自重构约束权重 (Self-Reconstruction)
+  self_recon_weight: 0.05    # 自重构约束权重 (Self-Reconstruction)
 
 # ---- 恢复训练 ----
 resume:
