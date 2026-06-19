@@ -4,7 +4,7 @@ experiment:
   tag: "night_100k_below_40"
 
 data:
-  path: "datasets/Night_100k_below_40"
+  path: "datasets/BDD_below40"
   mode: "pure_low_single"
   crop_size: 512
   batch_size: 4
