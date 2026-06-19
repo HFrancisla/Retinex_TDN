@@ -26,7 +26,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from data import MyDataSet, UnpairedDataSet, PureLowDataSet, transforms as T
 from models import DecomNet
-from utils import read_data, read_pure_low_data, train_one_epoch, evaluate, create_lr_scheduler, load_config
+from utils import read_data, read_pure_low_data, train_step, evaluate, create_lr_scheduler, load_config, _build_loss_function
 
 
 def generate_experiment_name(cfg):
@@ -119,8 +119,9 @@ def main(args):
             "training": {
                 "epochs": args.epochs,
                 "lr": args.lr,
-                "warmup": True,
-                "save_interval": 20,
+                "warmup_iterations": 0,
+                "eval_interval": 500,
+                "save_interval": 5000,
                 "save_best": True
             },
             "loss": {
@@ -182,7 +183,6 @@ def main(args):
     tb_writer = SummaryWriter(log_dir=file_log_path)
 
     best_valloss = 1e5
-    start_epoch = 0
 
     # ---- 加载数据 ----
     data_path = data_cfg.get("path", "")
@@ -287,74 +287,129 @@ def main(args):
     pg = [p for p in model.parameters() if p.requires_grad]
     optimizer = optim.Adam(pg, lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=5E-5)
 
-    epochs = train_cfg.get("epochs", 300)
-    warmup = train_cfg.get("warmup", True)
-    lr_scheduler = create_lr_scheduler(optimizer, len(train_loader), epochs, warmup=warmup)
+    # ---- 训练步数 ----
+    iterations_per_epoch = len(train_loader)
+    max_iterations = train_cfg.get("max_iterations", 0)
+    if max_iterations <= 0:
+        # 兼容旧配置：从 max_epochs / epochs 推算
+        max_epochs = train_cfg.get("max_epochs", train_cfg.get("epochs", 300))
+        max_iterations = max_epochs * iterations_per_epoch
+        print(f"从 max_epochs={max_epochs} 推算: max_iterations={max_iterations}")
+    else:
+        print(f"max_iterations: {max_iterations} (iterations_per_epoch={iterations_per_epoch})")
+
+    # ---- 学习率调度器 ----
+    warmup_iterations = train_cfg.get("warmup_iterations", 0)
+    lr_scheduler = create_lr_scheduler(optimizer, max_iterations, warmup_iterations)
 
     # ---- 恢复训练 ----
+    start_iter = 0
     checkpoint_path = resume_cfg.get("checkpoint", "")
     if checkpoint_path:
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        start_epoch = checkpoint['epoch'] + 1
-        print(f"Resumed from checkpoint: epoch {start_epoch}")
+        start_iter = checkpoint.get('global_iter', checkpoint.get('epoch', 0) * iterations_per_epoch) + 1
+        print(f"Resumed from checkpoint: step {start_iter}")
 
-    # ---- 训练循环 ----
-    save_interval = train_cfg.get("save_interval", None)   # None=不定期保存
+    # ---- 评估/保存间隔 ----
+    eval_interval = train_cfg.get("eval_interval", 500)
+    save_interval = train_cfg.get("save_interval", 5000)
     save_best = train_cfg.get("save_best", True)
-    for epoch in range(start_epoch, epochs):
-        train_loss, train_recon_loss, train_anchor_loss, \
-        train_bdsp_loss, train_smooth_loss, train_self_recon_loss, lr = train_one_epoch(
-            model=model, optimizer=optimizer, data_loader=train_loader,
-            lr_scheduler=lr_scheduler, device=device, epoch=epoch,
-            loss_cfg=loss_cfg)
+    save_img_interval = train_cfg.get("save_img_interval", eval_interval * 4)
 
-        val_loss, val_recon_loss, val_anchor_loss, \
-        val_bdsp_loss, val_smooth_loss, val_self_recon_loss = evaluate(
-            model=model, data_loader=val_loader, device=device,
-            epoch=epoch, lr=lr, filefold_path=file_img_path,
-            loss_cfg=loss_cfg)
+    print(f"eval_interval: {eval_interval} steps")
+    print(f"save_interval: {save_interval} steps")
+    print(f"save_img_interval: {save_img_interval} steps")
 
-        tb_writer.add_scalar("train/total_loss", train_loss, epoch)
-        tb_writer.add_scalar("train/recon_loss", train_recon_loss, epoch)
-        tb_writer.add_scalar("train/anchor_loss", train_anchor_loss, epoch)
-        tb_writer.add_scalar("train/bdsp_loss", train_bdsp_loss, epoch)
-        tb_writer.add_scalar("train/smooth_loss", train_smooth_loss, epoch)
-        tb_writer.add_scalar("train/self_recon_loss", train_self_recon_loss, epoch)
+    # ---- 构建损失函数（复用，不重复构建）----
+    loss_function = _build_loss_function(loss_cfg)
+    if torch.cuda.is_available():
+        loss_function = loss_function.to(device)
 
-        tb_writer.add_scalar("val/total_loss", val_loss, epoch)
-        tb_writer.add_scalar("val/recon_loss", val_recon_loss, epoch)
-        tb_writer.add_scalar("val/anchor_loss", val_anchor_loss, epoch)
-        tb_writer.add_scalar("val/bdsp_loss", val_bdsp_loss, epoch)
-        tb_writer.add_scalar("val/smooth_loss", val_smooth_loss, epoch)
-        tb_writer.add_scalar("val/self_recon_loss", val_self_recon_loss, epoch)
+    # ---- 训练循环（step-based）----
+    global_iter = start_iter
+    epoch = 0
+    data_iter = iter(train_loader)
+    accum_loss = torch.zeros(6, device=device)
+    accum_count = 0
 
-        # 保存最佳模型（由 save_best 开关控制，默认开启）
-        if save_best and val_loss < best_valloss:
-            best_valloss = val_loss
-            best_save_path = os.path.join(file_weights_path, "best_model.pth")
-            torch.save({
-                "model": model.module.state_dict() if use_dp else model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "lr_scheduler": lr_scheduler.state_dict(),
-                "epoch": epoch,
-                "val_loss": val_loss,
-                "config": cfg
-            }, best_save_path)
-            print(f"Saved best model at epoch {epoch} with val_loss: {val_loss:.4f}")
+    while global_iter < max_iterations:
+        # 获取下一个 batch，epoch 结束时重新 shuffle
+        try:
+            data = next(data_iter)
+        except StopIteration:
+            epoch += 1
+            data_iter = iter(train_loader)
+            data = next(data_iter)
 
-        # 定期保存 checkpoint（save_interval 为 null 时跳过）
-        if save_interval is not None and epoch % save_interval == 0:
+        # 单步训练
+        loss_vals = train_step(model, optimizer, loss_function, data, device, lr_scheduler)
+        accum_loss += torch.tensor(loss_vals, device=device)
+        accum_count += 1
+        global_iter += 1
+        lr = optimizer.param_groups[0]["lr"]
+
+        # 更新进度条
+        avg = accum_loss / accum_count
+        print(f"\r[step {global_iter}/{max_iterations}] total: {avg[0]:.3f}  recon: {avg[1]:.3f}  "
+              f"anchor: {avg[2]:.3f}  bdsp: {avg[3]:.3f}  smooth: {avg[4]:.3f}  "
+              f"self-recon: {avg[5]:.3f}  lr: {lr:.6f}", end="", flush=True)
+
+        # ---- 评估 ----
+        if global_iter % eval_interval == 0:
+            print()  # 换行，避免 tqdm/eval 输出混乱
+            save_img = global_iter % save_img_interval == 0
+            val_loss, val_recon, val_anchor, val_bdsp, val_smooth, val_self_recon = evaluate(
+                model=model, data_loader=val_loader, device=device,
+                lr=lr, filefold_path=file_img_path,
+                loss_function=loss_function, save_images=save_img, global_iter=global_iter)
+
+            # TensorBoard
+            train_avg = (accum_loss / accum_count).cpu().numpy()
+            tb_writer.add_scalar("train/total_loss", train_avg[0], global_iter)
+            tb_writer.add_scalar("train/recon_loss", train_avg[1], global_iter)
+            tb_writer.add_scalar("train/anchor_loss", train_avg[2], global_iter)
+            tb_writer.add_scalar("train/bdsp_loss", train_avg[3], global_iter)
+            tb_writer.add_scalar("train/smooth_loss", train_avg[4], global_iter)
+            tb_writer.add_scalar("train/self_recon_loss", train_avg[5], global_iter)
+            tb_writer.add_scalar("val/total_loss", val_loss, global_iter)
+            tb_writer.add_scalar("val/recon_loss", val_recon, global_iter)
+            tb_writer.add_scalar("val/anchor_loss", val_anchor, global_iter)
+            tb_writer.add_scalar("val/bdsp_loss", val_bdsp, global_iter)
+            tb_writer.add_scalar("val/smooth_loss", val_smooth, global_iter)
+            tb_writer.add_scalar("val/self_recon_loss", val_self_recon, global_iter)
+
+            # 重置训练损失累积
+            accum_loss.zero_()
+            accum_count = 0
+
+            # 保存最佳模型
+            if save_best and val_loss < best_valloss:
+                best_valloss = val_loss
+                best_save_path = os.path.join(file_weights_path, "best_model.pth")
+                torch.save({
+                    "model": model.module.state_dict() if use_dp else model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "lr_scheduler": lr_scheduler.state_dict(),
+                    "global_iter": global_iter,
+                    "val_loss": val_loss,
+                    "config": cfg
+                }, best_save_path)
+                print(f"Saved best model at step {global_iter} with val_loss: {val_loss:.4f}")
+
+        # ---- 定期保存 checkpoint ----
+        if global_iter % save_interval == 0:
             save_file = {
                 "model": model.module.state_dict() if use_dp else model.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": lr_scheduler.state_dict(),
-                "epoch": epoch,
+                "global_iter": global_iter,
                 "config": cfg
             }
-            torch.save(save_file, os.path.join(file_weights_path, f"checkpoint_epoch{epoch}.pth"))
+            torch.save(save_file, os.path.join(file_weights_path, f"checkpoint_{global_iter}.pth"))
 
+    print()  # 换行
     tb_writer.close()
     print(f"\nTraining completed. Best validation loss: {best_valloss:.4f}")
     print(f"Results saved to: {filefold_path}")

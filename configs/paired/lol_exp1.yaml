@@ -1,5 +1,5 @@
-# LOL 数据集实验 - 基础配置
-# 损失权重: recon=20, anchor=1, bdsp=1, smooth=0, self_recon=1
+# LOL 数据集实验 - paired 配置
+# 损失权重: recon_high=1, recon_low=0.3, cross_recon=0.001, smooth=0, equal_r=0
 
 experiment:
   name: "lol_baseline"
@@ -19,25 +19,23 @@ model:
   gpu_id: "0"
 
 training:
-  epochs: 300
+  max_iterations: 100000
   lr: 0.0001
-  warmup: true
-  save_interval: 20
+  warmup_iterations: 1000       # 线性 warmup 步数
+  eval_interval: 2000      # 每 N 步评估一次
+  save_interval: 10000     # 每 N 步保存 checkpoint
+  save_img_interval: 10000  # 每 N 步保存可视化图片
   save_best: true
 
 loss:
-  # 统一损失字段，缺失项补 0，便于横向比较
-  recon_weight_high: 0
-  recon_weight_low: 0
-  cross_recon_weight_low: 0
-  cross_recon_weight_high: 0
+  # paired 模式: 仅支持 recon_weight_high/low, cross_recon_weight_high/low, smooth_weight, equal_r_weight
+  recon_weight_high: 1.0
+  recon_weight_low: 0.3
+  cross_recon_weight_low: 0.001
+  cross_recon_weight_high: 0.001
   equal_r_weight: 0
-  recon_weight: 1
-  anchor_weight: 0.05
-  bdsp_weight: 0.05
   smooth_weight: 0
-  self_recon_weight: 0.05
-  reflect_weight: 0
+
 resume:
   checkpoint: ""
   weights: ""
