@@ -9,7 +9,7 @@ experiment:
 data:
   mode: "paired"
   path: "datasets/LOLv2"
-  crop_size: 256
+  crop_size: 384
   batch_size: 2
   num_workers: 0
 

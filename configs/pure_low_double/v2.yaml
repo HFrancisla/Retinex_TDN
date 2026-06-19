@@ -6,7 +6,7 @@ experiment:
 data:
   path: "datasets/pure_low_data"
   mode: "pure_low_double"
-  crop_size: 256
+  crop_size: 384
   batch_size: 2
   num_workers: 0
 

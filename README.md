@@ -10,11 +10,12 @@ RetinexLR/
 │   ├── network.py                 # DecomNet + TDN backbone
 │   └── wavelets.py                # 可微 DWT / IDWT 小波变换
 ├── data/                          # 数据加载
-│   ├── dataset.py                 # 配对图像 Dataset
+│   ├── dataset.py                 # 配对/非配对/纯低光 Dataset
 │   └── transforms.py              # 同步数据增强
-├── loss/                        # 损失函数
+├── loss/                          # 损失函数
 │   ├── decomposition_loss.py      # Retinex 分解总损失
 │   └── bsdp.py                    # BDSP 边缘检测算子
+├── configs/                       # YAML 配置文件（推荐用法）
 ├── scripts/                       # 辅助分析工具
 │   ├── eval.py                    # 对数域梯度图评估
 │   ├── metrics.py                 # PSNR / SSIM / LPIPS 指标计算
@@ -28,33 +29,14 @@ RetinexLR/
 
 ## 环境配置
 
-### 快速验证（uv，CPU）
-
-仓库内置了可直接运行的示例配置 `configs/quickstart_cpu.yaml`，使用内置小数据集 `datasets/quickstart`，无需 GPU 即可完成冒烟训练：
-
-```bash
-uv venv
-uv pip install -r requirements.txt
-MPLBACKEND=Agg uv run python train.py --config configs/quickstart_cpu.yaml
-```
-
-> 注意：`requirements.txt` 已包含 `torch` / `torchvision`。若平台需要特定 CUDA 构建，请按 PyTorch 官方指引覆盖安装。
-
-项目使用 [uv](https://docs.astral.sh/uv/) 管理 Python 环境和依赖。
-
-```bash
-# 安装 uv（如尚未安装）
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 创建虚拟环境并安装依赖
-uv venv
-uv pip install -r requirements.txt
-
-# 安装 PyTorch（根据 CUDA 版本选择，示例为 CUDA 12.1）
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
 需要 Python >= 3.8。
+
+```bash
+pip install -r requirements.txt
+
+# 若平台需要特定 CUDA 构建，请按 PyTorch 官方指引覆盖安装
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```
 
 ## 数据准备
 
@@ -72,35 +54,69 @@ uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu
 
 图像格式支持 `.jpg` / `.png`。
 
-训练模式通过配置 `data.mode` 控制：
-- `"paired"`（默认）：low 与 high 文件夹中的图像需一一对应，数据增强同步施加。
-- `"unpaired"`：low 与 high 图像各自独立加载，每张 low 图随机匹配一张 high 图，数据增强独立施加。
-
 ## 训练
 
+推荐使用 YAML 配置文件启动训练：
+
 ```bash
-python train.py \
-    --data-path <dataset_root> \
-    --epochs 300 \
-    --batch-size 2 \
-    --lr 0.0001 \
-    --gpu_id 0
+python train.py --config configs/paired/lol_exp1.yaml
 ```
 
-| 参数 | 默认值 | 说明 |
+详细配置说明见 [configs/README.md](configs/README.md)。
+
+### 训练模式
+
+通过 `data.mode` 和 `loss.mode` 控制：
+
+| 模式 | 说明 |
+|---|---|
+| `paired` | low/high 配对数据，一一对应 |
+| `unpaired` | low/high 非配对，随机匹配 |
+| `pure_low_single` | 仅 low 图像，单视图自监督分解 |
+| `pure_low_double` | 仅 low 图像，双视图自监督分解 |
+
+### 实验命名
+
+配置文件中 `experiment` 段控制实验目录名：
+
+```yaml
+experiment:
+  name: "lol_baseline"   # 手动命名（auto_name=false 时必填）
+  auto_name: true        # 自动生成
+  tag: ""                # 可选后缀
+```
+
+**auto_name=true** 时自动生成格式：`{dataset}_{mode}_{损失权重缩写}`
+
+- `dataset`：取 `data.path` 最后一段目录名
+- `mode`：训练模式
+- 非零损失权重按固定顺序拼接，格式为 `{值}{缩写}`
+
+示例输出：
+
+```
+LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr
+```
+
+完整目录名还会追加时间戳：`experiments/LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr_20260619-153000/`
+
+### 损失权重缩写
+
+| 配置键 | 缩写 | 说明 |
 |---|---|---|
-| `--data-path` | - | 数据集根目录 |
-| `--epochs` | 300 | 训练总轮数 |
-| `--batch-size` | 2 | 批次大小 |
-| `--lr` | 0.0001 | 学习率 |
-| `--weights` | `''` | 预训练权重路径 |
-| `--resume` | `''` | 恢复训练的 checkpoint 路径 |
-| `--use_dp` | False | 是否使用 DataParallel 多卡训练 |
-| `--gpu_id` | `'0'` | 可见 GPU 编号 |
+| `recon_weight` | `r` | 重建损失 |
+| `recon_weight_high` | `rh` | 高光重建 |
+| `recon_weight_low` | `rl` | 低光重建 |
+| `cross_recon_weight_high` | `crh` | 交叉重建（高光） |
+| `cross_recon_weight_low` | `crl` | 交叉重建（低光） |
+| `equal_r_weight` | `er` | 反射一致性 |
+| `anchor_weight` | `anchor` | 光照锚定 |
+| `bdsp_weight` | `bdsp` | BDSP 结构保持 |
+| `smooth_weight` | `sm` | 光照平滑 |
+| `self_recon_weight` | `sr` | 自重构约束 |
+| `reflect_weight` | `ref` | 反射约束 |
 
-训练输出保存至 `experiments/<实验名>/`，包含 `weights/`、`img/`（中间可视化）、`log/`（TensorBoard 日志）。
-
-启动 TensorBoard：
+### TensorBoard
 
 ```bash
 tensorboard --logdir experiments/
