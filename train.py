@@ -33,20 +33,58 @@ def generate_experiment_name(cfg):
     """
     根据配置生成实验目录名。
 
-    auto_name=true 时：{name}_{mode}[_{tag}]
-    mode 取 loss.mode，缺省跟随 data.mode。
+    auto_name=false 时：使用 experiment.name（必填）。
+    auto_name=true 时：{dataset}_{mode}[_{losses}][_{tag}]
+    其中 dataset 取 data.path 末段，mode 取 loss.mode 或 data.mode，
+    losses 只包含非零权重，格式为 {值}{缩写}，用 _ 连接。
     """
+    # 损失字段 -> 缩写映射（按固定顺序输出）
+    LOSS_ABBR = [
+        ("recon_weight",              "r"),
+        ("recon_weight_high",         "rh"),
+        ("recon_weight_low",          "rl"),
+        ("cross_recon_weight_high",   "crh"),
+        ("cross_recon_weight_low",    "crl"),
+        ("equal_r_weight",            "er"),
+        ("anchor_weight",             "anchor"),
+        ("bdsp_weight",               "bdsp"),
+        ("smooth_weight",             "sm"),
+        ("self_recon_weight",         "sr"),
+        ("reflect_weight",            "ref"),
+    ]
+
     exp_cfg = cfg.get("experiment", {})
-    name = exp_cfg.get("name", "exp")
     auto_name = exp_cfg.get("auto_name", False)
     tag = exp_cfg.get("tag", "")
 
-    if auto_name:
-        loss_cfg = cfg.get("loss", {})
-        data_cfg = cfg.get("data", {})
-        mode = loss_cfg.get("mode", data_cfg.get("mode", "unpaired"))
-        name = f"{name}_{mode}"
+    if not auto_name:
+        name = exp_cfg.get("name", "")
+        if not name:
+            raise ValueError(
+                "experiment.name 未设置。请在配置中指定 experiment.name，"
+                "或设置 experiment.auto_name: true 自动生成。"
+            )
+        return f"{name}_{tag}" if tag else name
 
+    # ---- auto_name=true：从配置自动组装 ----
+    data_cfg = cfg.get("data", {})
+    loss_cfg = cfg.get("loss", {})
+
+    # dataset: 取 data.path 最后一段目录名
+    data_path = data_cfg.get("path", "unknown")
+    dataset = os.path.basename(data_path.rstrip("/\\"))
+
+    # mode: 优先 loss.mode，缺省 data.mode
+    mode = loss_cfg.get("mode", data_cfg.get("mode", "unpaired"))
+
+    # 非零损失权重
+    parts = []
+    for key, abbr in LOSS_ABBR:
+        val = loss_cfg.get(key, 0)
+        if val:
+            parts.append(f"{val}{abbr}")
+
+    name = "_".join([dataset, mode] + parts)
     if tag:
         name = f"{name}_{tag}"
 

@@ -1,3 +1,8 @@
+experiment:
+  name: ""
+  auto_name: true
+  tag: ""
+
 data:
   path: "datasets/LOLv2"
   mode: "paired"            # 训练模式: "paired" / "unpaired" / "pure_low_single" / "pure_low_double"
