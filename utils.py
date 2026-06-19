@@ -395,15 +395,16 @@ def evaluate(model, data_loader, device, lr, filefold_path,
         accu_self_recon_loss += loss_self_recon
 
         n = step + 1
-        data_loader.desc = (
-            "[val step {}] total: {:.3f}  recon: {:.3f}  anchor: {:.3f}  "
-            "bdsp: {:.3f}  smooth: {:.3f}  self-recon: {:.3f}  lr: {:.6f}"
-        ).format(
-            global_iter,
-            accu_total_loss.item() / n, accu_recon_loss.item() / n,
-            accu_anchor_loss.item() / n, accu_bdsp_loss.item() / n,
-            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
-        )
+        avg_vals = [accu_total_loss.item() / n, accu_recon_loss.item() / n,
+                       accu_anchor_loss.item() / n, accu_bdsp_loss.item() / n,
+                       accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n]
+        loss_names = ["total", "recon", "anchor", "bdsp", "smooth", "self-recon"]
+        parts = [f"{loss_names[0]}: {avg_vals[0]:.3f}"]
+        for i in range(1, 6):
+            if avg_vals[i] > 0:
+                parts.append(f"{loss_names[i]}: {avg_vals[i]:.3f}")
+        parts.append(f"lr: {lr:.6f}")
+        data_loader.desc = f"[val step {global_iter}] " + "  ".join(parts)
 
     step_count = max(step + 1, 1) if data_loader.iterable else 0
     if step_count == 0:

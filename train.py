@@ -18,13 +18,14 @@ Retinex 分解模型训练入口。
 import os
 import argparse
 import datetime
+import time
 
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
-from data import MyDataSet, UnpairedDataSet, PureLowDataSet, transforms as T
+from data import MyDataSet, UnpairedDataSet, PureLowDataSet, PureLowSingleDataSet, transforms as T
 from models import DecomNet
 from utils import read_data, read_pure_low_data, train_step, evaluate, create_lr_scheduler, load_config, _build_loss_function
 
@@ -333,6 +334,7 @@ def main(args):
     data_iter = iter(train_loader)
     accum_loss = torch.zeros(6, device=device)
     accum_count = 0
+    train_start = time.perf_counter()
 
     while global_iter < max_iterations:
         # 获取下一个 batch，epoch 结束时重新 shuffle
@@ -350,11 +352,28 @@ def main(args):
         global_iter += 1
         lr = optimizer.param_groups[0]["lr"]
 
-        # 更新进度条
+        # 更新进度条（只打印非零损失项）
         avg = accum_loss / accum_count
-        print(f"\r[step {global_iter}/{max_iterations}] total: {avg[0]:.3f}  recon: {avg[1]:.3f}  "
-              f"anchor: {avg[2]:.3f}  bdsp: {avg[3]:.3f}  smooth: {avg[4]:.3f}  "
-              f"self-recon: {avg[5]:.3f}  lr: {lr:.6f}", end="", flush=True)
+        loss_names = ["total", "recon", "anchor", "bdsp", "smooth", "self-recon"]
+        parts = [f"{loss_names[0]}: {avg[0]:.3f}"]
+        for i in range(1, 6):
+            if avg[i] > 0:
+                parts.append(f"{loss_names[i]}: {avg[i]:.3f}")
+        parts.append(f"lr: {lr:.6f}")
+        # 速度和 ETA
+        elapsed = time.perf_counter() - train_start
+        steps_done = global_iter - start_iter
+        if steps_done > 0:
+            avg_time = elapsed / steps_done
+            remaining = avg_time * (max_iterations - global_iter)
+            if remaining >= 3600:
+                eta = f"{remaining/3600:.1f}h"
+            elif remaining >= 60:
+                eta = f"{remaining/60:.0f}m"
+            else:
+                eta = f"{remaining:.0f}s"
+            parts.append(f"{avg_time:.2f}s/it  ETA {eta}")
+        print(f"\r[step {global_iter}/{max_iterations}] " + "  ".join(parts), end="", flush=True)
 
         # ---- 评估 ----
         if global_iter % eval_interval == 0:
