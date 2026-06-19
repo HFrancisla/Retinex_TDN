@@ -4,13 +4,12 @@
 experiment:
   name: "lol_baseline"
   auto_name: true
-  tag: ""
 
 data:
   mode: "paired"
   path: "datasets/LOLv2"
   crop_size: 384
-  batch_size: 2
+  batch_size: 4
   num_workers: 0
 
 model:

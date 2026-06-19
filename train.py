@@ -35,7 +35,7 @@ def generate_experiment_name(cfg):
     根据配置生成实验目录名。
 
     auto_name=false 时：使用 experiment.name（必填）。
-    auto_name=true 时：{dataset}_{mode}[_{losses}][_{tag}]
+    auto_name=true 时：{dataset}_{mode}[_{losses}]
     其中 dataset 取 data.path 末段，mode 取 loss.mode 或 data.mode，
     losses 只包含非零权重，格式为 {值}{缩写}，用 _ 连接。
     """
@@ -56,8 +56,6 @@ def generate_experiment_name(cfg):
 
     exp_cfg = cfg.get("experiment", {})
     auto_name = exp_cfg.get("auto_name", False)
-    tag = exp_cfg.get("tag", "")
-
     if not auto_name:
         name = exp_cfg.get("name", "")
         if not name:
@@ -65,7 +63,7 @@ def generate_experiment_name(cfg):
                 "experiment.name 未设置。请在配置中指定 experiment.name，"
                 "或设置 experiment.auto_name: true 自动生成。"
             )
-        return f"{name}_{tag}" if tag else name
+        return name
 
     # ---- auto_name=true：从配置自动组装 ----
     data_cfg = cfg.get("data", {})
@@ -85,11 +83,7 @@ def generate_experiment_name(cfg):
         if val:
             parts.append(f"{val}{abbr}")
 
-    name = "_".join([dataset, mode] + parts)
-    if tag:
-        name = f"{name}_{tag}"
-
-    return name
+    return "_".join([dataset, mode] + parts)
 
 
 def main(args):
@@ -103,7 +97,6 @@ def main(args):
             "experiment": {
                 "name": "decom_lol",
                 "auto_name": False,
-                "tag": ""
             },
             "data": {
                 "path": args.data_path,

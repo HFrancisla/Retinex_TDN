@@ -1,13 +1,12 @@
 experiment:
   name: "pure_low_single"
   auto_name: true
-  tag: ""
 
 data:
   path: "datasets/LOLv2"
   mode: "pure_low_single"
   crop_size: 512
-  batch_size: 2
+  batch_size: 4
   num_workers: 0
 
 model:

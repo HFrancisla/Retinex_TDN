@@ -1,13 +1,12 @@
 experiment:
   name: "paired"
   auto_name: true
-  tag: ""
 
 data:
   path: "datasets/LOLv2"
   mode: "paired"
   crop_size: 384
-  batch_size: 2
+  batch_size: 4
   num_workers: 0
 
 model:

@@ -1,0 +1,36 @@
+experiment:
+  name: "pure_low_single_night_100k"
+  auto_name: true
+  tag: "night_100k_below_40"
+
+data:
+  path: "datasets/Night_100k_below_40"
+  mode: "pure_low_single"
+  crop_size: 512
+  batch_size: 4
+  num_workers: 4
+
+model:
+  name: "DecomNet"
+  use_dp: false
+  gpu_id: "0"
+
+training:
+  max_iterations: 100000
+  lr: 0.0001
+  warmup_iterations: 1000
+  eval_interval: 2000
+  save_interval: 10000
+  save_img_interval: 10000
+  save_best: true
+
+loss:
+  recon_weight: 1
+  anchor_weight: 0.05
+  bdsp_weight: 0.05
+
+resume:
+  checkpoint: ""
+  weights: ""
+
+device: "cuda"

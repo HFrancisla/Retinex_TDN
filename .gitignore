@@ -1,3 +1,4 @@
 _docs/
 datasets/
 experiments/
+*.pyc
