@@ -80,3 +80,72 @@ class UnpairedDataSet(Dataset):
         images = torch.stack(images, dim=0)
         images_ref = torch.stack(images_ref, dim=0)
         return images, images_ref
+
+
+class PureLowDataSet(Dataset):
+    """
+    Pure-low 模式数据集。
+
+    仅加载 low 图像，并为每张图构造两个独立增强视图，
+    用于无 normal-light 监督的自监督分解训练。
+    """
+
+    def __init__(self, images_low_path: list, transform=None):
+        self.images_low_path = images_low_path
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.images_low_path)
+
+    def __getitem__(self, item):
+        img = Image.open(self.images_low_path[item])
+        if img.mode != 'RGB':
+            raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
+
+        if self.transform is not None:
+            view1 = self.transform(img)
+            view2 = self.transform(img)
+        else:
+            view1 = img
+            view2 = img
+
+        return view1, view2
+
+    @staticmethod
+    def collate_fn(batch):
+        views1, views2 = tuple(zip(*batch))
+        views1 = torch.stack(views1, dim=0)
+        views2 = torch.stack(views2, dim=0)
+        return views1, views2
+
+
+class PureLowSingleDataSet(Dataset):
+    """
+    Pure-low 单视图数据集。
+
+    仅加载 low 图像，对每张图执行一次增强，返回单张图，
+    由训练/验证循环单独处理，避免 single 模式下的重复 loss 计算。
+    """
+
+    def __init__(self, images_low_path: list, transform=None):
+        self.images_low_path = images_low_path
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.images_low_path)
+
+    def __getitem__(self, item):
+        img = Image.open(self.images_low_path[item])
+        if img.mode != 'RGB':
+            raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
+
+        if self.transform is not None:
+            view = self.transform(img)
+        else:
+            view = img
+
+        return view
+
+    @staticmethod
+    def collate_fn(batch):
+        return torch.stack(batch, dim=0)

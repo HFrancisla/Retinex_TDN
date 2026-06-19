@@ -1,0 +1,43 @@
+experiment:
+  name: "pure_low_double_v2"
+  auto_name: true
+  tag: ""
+
+data:
+  path: "datasets/pure_low_data"
+  mode: "pure_low_double"
+  crop_size: 256
+  batch_size: 2
+  num_workers: 0
+
+model:
+  name: "DecomNet"
+  use_dp: false
+  gpu_id: "0"
+
+training:
+  epochs: 300
+  lr: 0.0001
+  warmup: true
+  save_interval: 20
+  save_best: true
+
+loss:
+  # 统一损失字段，缺失项补 0，便于横向比较
+  mode: "pure_low_double"
+  recon_weight_high: 0
+  recon_weight_low: 0
+  cross_recon_weight_low: 0
+  cross_recon_weight_high: 0
+  equal_r_weight: 0
+  recon_weight: 1
+  anchor_weight: 0.05
+  bdsp_weight: 0.05
+  smooth_weight: 0
+  self_recon_weight: 0.05
+  reflect_weight: 0.05
+resume:
+  checkpoint: ""
+  weights: ""
+
+device: "cuda"

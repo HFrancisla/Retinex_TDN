@@ -26,12 +26,18 @@ training:
   save_best: true
 
 loss:
+  # 统一损失字段，缺失项补 0，便于横向比较
+  recon_weight_high: 0
+  recon_weight_low: 0
+  cross_recon_weight_low: 0
+  cross_recon_weight_high: 0
+  equal_r_weight: 0
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05
   smooth_weight: 0
   self_recon_weight: 0.05
-
+  reflect_weight: 0
 resume:
   checkpoint: ""
   weights: ""

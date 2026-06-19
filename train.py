@@ -9,7 +9,7 @@ Retinex 分解模型训练入口。
 
 用法示例：
     # 使用配置文件（推荐）
-    python train.py --config configs/lol_exp1.yaml
+    python train.py --config configs/paired/lol_exp1.yaml
 
     # 使用命令行参数（向后兼容）
     python train.py --data-path /path/to/dataset --epochs 300 --batch-size 2 --lr 0.0001
@@ -24,9 +24,9 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
-from data import MyDataSet, UnpairedDataSet, transforms as T
+from data import MyDataSet, UnpairedDataSet, PureLowDataSet, transforms as T
 from models import DecomNet
-from utils import read_data, train_one_epoch, evaluate, create_lr_scheduler, load_config
+from utils import read_data, read_pure_low_data, train_one_epoch, evaluate, create_lr_scheduler, load_config
 
 
 def generate_experiment_name(cfg):
@@ -149,7 +149,11 @@ def main(args):
     # ---- 加载数据 ----
     data_path = data_cfg.get("path", "")
     data_mode = data_cfg["mode"]
-    train_low_path, train_high_path, val_low_path, val_high_path = read_data(data_path, mode=data_mode)
+    if data_mode in ("pure_low_single", "pure_low_double"):
+        train_low_path, val_low_path = read_pure_low_data(data_path)
+        train_high_path, val_high_path = [], []
+    else:
+        train_low_path, train_high_path, val_low_path, val_high_path = read_data(data_path, mode=data_mode)
 
     crop_size = data_cfg.get("crop_size", 256)
     if data_mode == "paired":
@@ -166,6 +170,32 @@ def main(args):
         val_dataset = MyDataSet(images_low_path=val_low_path,
                                 images_high_path=val_high_path,
                                 transform=data_transform["val"])
+    elif data_mode == "pure_low_double":
+        from torchvision import transforms as torchvision_T
+        data_transform = {
+            "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size),
+                                              torchvision_T.RandomHorizontalFlip(0.5),
+                                              torchvision_T.RandomVerticalFlip(0.5),
+                                              torchvision_T.ToTensor()]),
+            "val": torchvision_T.Compose([torchvision_T.ToTensor()])
+        }
+        train_dataset = PureLowDataSet(images_low_path=train_low_path,
+                                        transform=data_transform["train"])
+        val_dataset = PureLowDataSet(images_low_path=val_low_path,
+                                      transform=data_transform["val"])
+    elif data_mode == "pure_low_single":
+        from torchvision import transforms as torchvision_T
+        data_transform = {
+            "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size),
+                                              torchvision_T.RandomHorizontalFlip(0.5),
+                                              torchvision_T.RandomVerticalFlip(0.5),
+                                              torchvision_T.ToTensor()]),
+            "val": torchvision_T.Compose([torchvision_T.ToTensor()])
+        }
+        train_dataset = PureLowSingleDataSet(images_low_path=train_low_path,
+                                              transform=data_transform["train"])
+        val_dataset = PureLowSingleDataSet(images_low_path=val_low_path,
+                                            transform=data_transform["val"])
     else:
         from torchvision import transforms as torchvision_T
         data_transform = {
@@ -181,7 +211,6 @@ def main(args):
         val_dataset = UnpairedDataSet(images_low_path=val_low_path,
                                       images_high_path=val_high_path,
                                       transform=data_transform["val"])
-
 
     batch_size = data_cfg.get("batch_size", 2)
     num_workers = data_cfg.get("num_workers", 0)

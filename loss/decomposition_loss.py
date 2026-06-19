@@ -239,3 +239,109 @@ class UnpairedLoss(nn.Module):
 
         return (self.loss_Decom, loss_recon, loss_anchor,
                 self.bdsp_loss, loss_smooth, self.self_recon_loss)
+
+
+class PureLowDoubleLoss(nn.Module):
+    """Pure-low 自监督分解损失（V1）。
+
+    仅依赖同一张 low 图的两个增强视图，不使用 normal-light 图像。
+    当前实现包含四项：重建、光照锚定、BDSP 结构保持、自重构一致性。
+    """
+
+    def __init__(self, recon_weight=1.0, anchor_weight=0.05, bdsp_weight=0.05,
+                 self_recon_weight=0.05, reflect_weight=0.0):
+        super().__init__()
+        self.recon_weight = recon_weight
+        self.anchor_weight = anchor_weight
+        self.bdsp_weight = bdsp_weight
+        self.self_recon_weight = self_recon_weight
+        self.reflect_weight = reflect_weight
+
+    @property
+    def use_smooth(self) -> bool:
+        return False
+
+    def forward(self, R1, R2, L1, L2, I1, I2, LR1, LR2):
+        zero = torch.tensor(0.0, device=R1.device)
+        L1_3 = torch.cat((L1, L1, L1), dim=1)
+        L2_3 = torch.cat((L2, L2, L2), dim=1)
+
+        self.recon_loss_1 = F.l1_loss(R1 * L1_3, I1)
+        self.recon_loss_2 = F.l1_loss(R2 * L2_3, I2)
+        loss_recon = self.recon_loss_1 + self.recon_loss_2
+
+        max1 = torch.max(I1, dim=1, keepdim=True)[0]
+        max2 = torch.max(I2, dim=1, keepdim=True)[0]
+        self.anchor_loss_1 = F.l1_loss(max1, L1)
+        self.anchor_loss_2 = F.l1_loss(max2, L2)
+        loss_anchor = self.anchor_loss_1 + self.anchor_loss_2
+
+        if self.bdsp_weight > 0:
+            self.bdsp_loss = F.l1_loss(BDSP_Face(R1), BDSP_Face(I1)) + F.l1_loss(BDSP_Face(R2), BDSP_Face(I2))
+        else:
+            self.bdsp_loss = zero
+
+        if self.self_recon_weight > 0:
+            self.self_recon_loss = F.l1_loss(LR1, LR2)
+        else:
+            self.self_recon_loss = zero
+
+        if self.reflect_weight > 0:
+            self.reflect_loss = F.l1_loss(R1, R2.detach()) + F.l1_loss(R2, R1.detach())
+        else:
+            self.reflect_loss = zero
+
+        self.loss_Decom = (
+            self.recon_weight * loss_recon
+            + self.anchor_weight * loss_anchor
+            + self.bdsp_weight * self.bdsp_loss
+            + self.self_recon_weight * self.self_recon_loss
+            + self.reflect_weight * self.reflect_loss
+        )
+
+        return (self.loss_Decom, loss_recon, loss_anchor, self.bdsp_loss, zero, self.self_recon_loss)
+
+
+class PureLowSingleLoss(nn.Module):
+    """Pure-low 单视图分解损失。
+
+    仅使用单次增强后的 low 图像，包含重建、光照锚定、BDSP 三项最小约束。
+    """
+
+    def __init__(self, recon_weight=1.0, anchor_weight=0.05, bdsp_weight=0.05,
+                 smooth_weight=0.0, self_recon_weight=0.0, reflect_weight=0.0):
+        super().__init__()
+        self.recon_weight = recon_weight
+        self.anchor_weight = anchor_weight
+        self.bdsp_weight = bdsp_weight
+        self.smooth_weight = smooth_weight
+        self.self_recon_weight = self_recon_weight
+        self.reflect_weight = reflect_weight
+
+    @property
+    def use_smooth(self) -> bool:
+        return False
+
+    def forward(self, R1, R2, L1, L2, I1, I2, LR1=None, LR2=None):
+        zero = torch.tensor(0.0, device=R1.device)
+        L1_3 = torch.cat((L1, L1, L1), dim=1)
+
+        loss_recon = F.l1_loss(R1 * L1_3, I1)
+
+        max1 = torch.max(I1, dim=1, keepdim=True)[0]
+        loss_anchor = F.l1_loss(max1, L1)
+
+        if self.bdsp_weight > 0:
+            loss_bdsp = F.l1_loss(BDSP_Face(R1), BDSP_Face(I1))
+        else:
+            loss_bdsp = zero
+
+        self.loss_Decom = (
+            self.recon_weight * loss_recon
+            + self.anchor_weight * loss_anchor
+            + self.bdsp_weight * loss_bdsp
+        )
+
+        return (self.loss_Decom, loss_recon, loss_anchor, loss_bdsp, zero, zero)
+
+# 为兼容旧配置，暴露一个别名

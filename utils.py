@@ -19,7 +19,7 @@ from tqdm import tqdm
 import numpy as np
 import cv2
 
-from loss import PairedLoss, UnpairedLoss
+from loss import PairedLoss, UnpairedLoss, PureLowSingleLoss, PureLowDoubleLoss
 
 
 def load_config(config_path: str) -> dict:
@@ -48,12 +48,18 @@ def _build_loss_function(loss_cfg):
     loss_cfg 中的 'mode' 字段决定使用哪套损失：
     - 'paired' -> PairedLoss
     - 'unpaired' -> UnpairedLoss
+    - 'pure_low_single' -> PureLowSingleLoss
+    - 'pure_low_double' -> PureLowDoubleLoss
     其余字段透传给对应损失类的 __init__。
     """
     cfg = dict(loss_cfg or {})
     mode = cfg.pop('mode', 'unpaired')
     if mode == 'paired':
         return PairedLoss(**cfg)
+    if mode == 'pure_low_single':
+        return PureLowSingleLoss(**cfg)
+    if mode == 'pure_low_double':
+        return PureLowDoubleLoss(**cfg)
     return UnpairedLoss(**cfg)
 
 
@@ -100,7 +106,10 @@ def read_data(root: str, mode: str):
         assert len(val_low_path) == len(val_high_path), "The length of val dataset does not match. low:{}, high:{}".format(len(val_low_path), len(val_high_path))
         print("image pair check finish")
     else:
-        print("unpaired mode: low({}) and high({}) loaded independently".format(len(train_low_path), len(train_high_path)))
+        if mode in ("pure_low_single", "pure_low_double"):
+            print("pure_low mode: low-only training, train({}), val({})".format(len(train_low_path), len(val_low_path)))
+        else:
+            print("unpaired mode: low({}) and high({}) loaded independently".format(len(train_low_path), len(train_high_path)))
     train_images_low_path = list(train_low_path)
     train_images_high_path = list(train_high_path)
     val_images_low_path = list(val_low_path)
@@ -117,6 +126,35 @@ def read_data(root: str, mode: str):
     return train_images_low_path, train_images_high_path, val_images_low_path, val_images_high_path
 
 
+
+
+
+def read_pure_low_data(root: str):
+    """读取 pure_low 数据集，仅使用 low 文件夹。"""
+    assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
+
+    train_root = os.path.join(root, "train")
+    val_root = os.path.join(root, "test")
+    assert os.path.exists(train_root), "train root: {} does not exist.".format(train_root)
+    assert os.path.exists(val_root), "val root: {} does not exist.".format(val_root)
+
+    supported = [".jpg", ".JPG", ".png", ".PNG"]
+    train_low_root = os.path.join(train_root, "low")
+    val_low_root = os.path.join(val_root, "low")
+    assert os.path.exists(train_low_root), "train low root: {} does not exist.".format(train_low_root)
+    assert os.path.exists(val_low_root), "val low root: {} does not exist.".format(val_low_root)
+
+    train_low_path = sorted(
+        [os.path.join(train_low_root, i) for i in os.listdir(train_low_root)
+         if os.path.splitext(i)[-1] in supported]
+    )
+    val_low_path = sorted(
+        [os.path.join(val_low_root, i) for i in os.listdir(val_low_root)
+         if os.path.splitext(i)[-1] in supported]
+    )
+
+    print("pure_low loader: train({}), val({})".format(len(train_low_path), len(val_low_path)))
+    return list(train_low_path), list(val_low_path)
 def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
     model.train()
     loss_function = _build_loss_function(loss_cfg)
@@ -136,25 +174,39 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
     data_loader = tqdm(data_loader, file=sys.stdout)
     lr = optimizer.param_groups[0]["lr"]
     for step, data in enumerate(data_loader):
-        I_low, I_high = data
+        if isinstance(loss_function, PureLowSingleLoss):
+            I_low = data
+            if torch.cuda.is_available():
+                I_low = I_low.to(device)
 
-        if torch.cuda.is_available():
-            I_low = I_low.to(device)
-            I_high = I_high.to(device)
+            R_low, L_low = model(I_low)
+            if loss_function.self_recon_weight > 0:
+                _, L_R_low = model(R_low)
+            else:
+                L_R_low = None
 
-        R_low, L_low = model(I_low)
-        R_high, L_high = model(I_high)
-
-        # Skip extra forward pass when self_recon_weight == 0
-        if loss_function.self_recon_weight > 0:
-            _, L_R_low = model(R_low)
-            _, L_R_high = model(R_high)
+            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
+                loss_function(R_low, R_low, L_low, L_low, I_low, I_low, L_R_low, L_R_low)
         else:
-            L_R_low = None
-            L_R_high = None
+            I_low, I_high = data
 
-        loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-            loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
+            if torch.cuda.is_available():
+                I_low = I_low.to(device)
+                I_high = I_high.to(device)
+
+            R_low, L_low = model(I_low)
+            R_high, L_high = model(I_high)
+
+            # Skip extra forward pass when self_recon_weight == 0
+            if loss_function.self_recon_weight > 0:
+                _, L_R_low = model(R_low)
+                _, L_R_high = model(R_high)
+            else:
+                L_R_low = None
+                L_R_high = None
+
+            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
+                loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
         loss.backward()
 
@@ -219,35 +271,55 @@ def evaluate(model, data_loader, device, epoch, lr, filefold_path, loss_cfg=None
 
     data_loader = tqdm(data_loader, file=sys.stdout)
     for step, data in enumerate(data_loader):
-        I_low, I_high = data
+        if isinstance(loss_function, PureLowSingleLoss):
+            I_low = data
+            if torch.cuda.is_available():
+                I_low = I_low.to(device)
 
-        if torch.cuda.is_available():
-            I_low = I_low.to(device)
-            I_high = I_high.to(device)
+            R_low, L_low = model(I_low)
+            if loss_function.self_recon_weight > 0:
+                _, L_R_low = model(R_low)
+            else:
+                L_R_low = None
 
-        R_low, L_low = model(I_low)
-        R_high, L_high = model(I_high)
+            if epoch % save_epoch == 0:
+                R_low_img = tensor2numpy_R(R_low)
+                L_low_img = tensor2numpy_L(L_low)
+                save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
+                save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
 
-        # Skip extra forward pass when self_recon_weight == 0
-        if loss_function.self_recon_weight > 0:
-            _, L_R_low = model(R_low)
-            _, L_R_high = model(R_high)
+            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
+                loss_function(R_low, R_low, L_low, L_low, I_low, I_low, L_R_low, L_R_low)
         else:
-            L_R_low = None
-            L_R_high = None
+            I_low, I_high = data
 
-        if epoch % save_epoch == 0:
-            R_low_img = tensor2numpy_R(R_low)
-            R_high_img = tensor2numpy_R(R_high)
-            L_low_img = tensor2numpy_L(L_low)
-            L_high_img = tensor2numpy_L(L_high)
-            save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
-            save_pic(R_high_img, evalfold_path, str(step) + "_R_high")
-            save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
-            save_pic(L_high_img, evalfold_path, str(step) + "_L_high")
+            if torch.cuda.is_available():
+                I_low = I_low.to(device)
+                I_high = I_high.to(device)
 
-        loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-            loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
+            R_low, L_low = model(I_low)
+            R_high, L_high = model(I_high)
+
+            # Skip extra forward pass when self_recon_weight == 0
+            if loss_function.self_recon_weight > 0:
+                _, L_R_low = model(R_low)
+                _, L_R_high = model(R_high)
+            else:
+                L_R_low = None
+                L_R_high = None
+
+            if epoch % save_epoch == 0:
+                R_low_img = tensor2numpy_R(R_low)
+                R_high_img = tensor2numpy_R(R_high)
+                L_low_img = tensor2numpy_L(L_low)
+                L_high_img = tensor2numpy_L(L_high)
+                save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
+                save_pic(R_high_img, evalfold_path, str(step) + "_R_high")
+                save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
+                save_pic(L_high_img, evalfold_path, str(step) + "_L_high")
+
+            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
+                loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
         accu_total_loss += loss
         accu_recon_loss += loss_recon
