@@ -4,7 +4,7 @@ experiment:
   tag: ""
 
 data:
-  path: "datasets/pure_low_data"
+  path: "datasets/LOLv2"
   mode: "pure_low_single"
   crop_size: 512
   batch_size: 2
