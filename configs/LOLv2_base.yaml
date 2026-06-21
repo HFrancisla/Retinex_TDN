@@ -10,7 +10,7 @@ data:
   num_workers: 0
 
 model:
-  name: "DecomNet"
+  name: "RetinexPointRaw"
   use_dp: false
   gpu_id: "0"
 
@@ -18,10 +18,12 @@ training:
   max_iterations: 100000
   lr: 0.0001
   warmup_iterations: 1000       # 线性 warmup 步数
-  eval_interval: 2000      # 每 N 步评估一次
-  save_interval: 10000     # 每 N 步保存 checkpoint
-  save_img_interval: 10000  # 每 N 步保存可视化图片
-  save_best: true
+  log_interval: 1000        # 每 N 步打印训练日志
+  save_ckpt_interval: 10000     # 每 N 步保存 checkpoint
+  eval:
+    eval_interval: 2000
+    save_img_interval: 10000  # 每 N 步保存可视化图片（必须是 eval.eval_interval 的整数倍）
+    save_best_ckpt: true
 
 loss:
   # paired 模式字段: recon_weight_high, recon_weight_low,

@@ -3,7 +3,7 @@ models/network.py
 
 Retinex 分解网络主模型。
 
-DecomNet 接收低光图像，通过 TDN（Transformer-based Decomposition Network）
+RetinexPointRaw 接收低光图像，通过 TDN（Transformer-based Decomposition Network）
 提取多尺度小波特征，输出反射分量 R 和光照标量 L。
 内部包含完整的 Transformer Block、DWT-FFN、多头频域注意力等组件。
 """
@@ -18,11 +18,11 @@ from .wavelets import DWT_2D, IDWT_2D
 import pywt
 
 
-# ============================== DecomNet ==================================
+# ============================== RetinexPointRaw ==================================
 
-class DecomNet(nn.Module):
+class RetinexPointRaw(nn.Module):
     def __init__(self, dim=24):
-        super(DecomNet, self).__init__()
+        super(RetinexPointRaw, self).__init__()
         self.net1_conv = nn.Sequential(nn.Conv2d(dim * 2**3, dim * 2**4, 3, 2, 1,groups=dim * 2**3, bias=False),
                                         nn.LeakyReLU())
         self.net2_conv = nn.Sequential(nn.Conv2d(dim * 2**4, dim * 2**5, 3, 2, 1,groups=dim * 2**4, bias=False),
@@ -371,3 +371,107 @@ class TDN(nn.Module):
         out_dec_level1 = self.output(out_dec_level1)
 
         return out_dec_level1, inp_enc_level2, out_enc_level2, out_enc_level3
+
+
+# ========================== DWTTransformer ===============================
+
+class DWTTransformer(nn.Module):
+    """DWT-based Transformer for L branch refinement."""
+    
+    def __init__(self, dim, num_heads=4, num_blocks=2, ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias'):
+        super(DWTTransformer, self).__init__()
+        
+        self.blocks = nn.Sequential(*[
+            TransformerBlock(dim=dim, num_heads=num_heads, ffn_expansion_factor=ffn_expansion_factor,
+                             bias=bias, LayerNorm_type=LayerNorm_type) for _ in range(num_blocks)
+        ])
+    
+    def forward(self, x):
+        return self.blocks(x)
+
+
+# ========================== RetinexPixelClassic ===========================
+
+class RetinexPixelClassic(nn.Module):
+    """RetinexPixelClassic — 逐像素光照版本。
+
+    R 分支与 RetinexPointRaw 完全相同（TDN Transformer U-Net）。
+    L 分支替换为轻量 CNN，输出 [B, 1, H, W] 逐像素光照图，
+    与 Diff-TDN 原版一致。
+    """
+
+    def __init__(self, dim=24, l_channel=32):
+        super(RetinexPixelClassic, self).__init__()
+        self.TDN_R = TDN(dim=dim)
+        # 逐像素光照 CNN — 与 Diff-TDN 原版一致
+        self.conv0 = nn.Conv2d(3, l_channel, 3, padding=1, padding_mode='replicate')
+        self.convs = nn.Sequential(
+            nn.Conv2d(l_channel, l_channel, 5, padding=2, padding_mode='replicate'),
+            nn.ReLU(),
+            nn.Conv2d(l_channel, l_channel, 3, padding=1, padding_mode='replicate'),
+            nn.ReLU(),
+            nn.Conv2d(l_channel, l_channel, 3, padding=1, padding_mode='replicate'),
+            nn.ReLU(),
+        )
+        self.recon = nn.Conv2d(l_channel, 1, 1)
+
+    def forward(self, input_im):
+        R, *_ = self.TDN_R(input_im)
+        R = torch.sigmoid(R)
+        feats = self.conv0(input_im)
+        feats = self.convs(feats)
+        L = torch.sigmoid(self.recon(feats))   # [B, 1, H, W]
+        return R, L
+
+
+# ========================== RetinexPixelTrans =============================
+
+class RetinexPixelTrans(nn.Module):
+    """RetinexPixelTrans — 基于 Transformer 的逐像素光照版本。
+
+    R 分支与 RetinexPointRaw 完全相同（TDN Transformer U-Net）。
+    L 分支从 cat(fea_L3, fea_down1) 开始，经过降维、两次上采样、
+    DWTTransformer 处理，输出逐像素光照图。
+    DWTTransformer 使用 1 个 block，与 encoder_level1 对称。
+    """
+
+    def __init__(self, dim=24, l_heads=1, l_ffn_expansion=2.66, bias=False, LayerNorm_type='WithBias'):
+        super(RetinexPixelTrans, self).__init__()
+        self.TDN_R = TDN(dim=dim)
+        self.down1 = Downsample(dim * 2)
+
+        # L 分支：从 8C 降到 4C
+        self.l_reduce = nn.Conv2d(dim * 8, dim * 4, kernel_size=1, bias=bias)
+        
+        # 两次上采样：4C -> 2C -> C
+        self.l_up1 = Upsample(dim * 4)  # 4C -> 2C, H/4 -> H/2
+        self.l_up2 = Upsample(dim * 2)  # 2C -> C, H/2 -> H
+        
+        # DWTTransformer 处理全分辨率特征 (1 block, 对称 encoder_level1)
+        self.l_transformer = DWTTransformer(
+            dim=dim,
+            num_heads=l_heads,
+            num_blocks=1,
+            ffn_expansion_factor=l_ffn_expansion,
+            bias=bias,
+            LayerNorm_type=LayerNorm_type
+        )
+        
+        # 最终输出：C -> 1
+        self.l_output = nn.Conv2d(dim, 1, kernel_size=3, stride=1, padding=1, bias=bias)
+
+    def forward(self, input_im):
+        R, fea_L1, fea_L2, fea_L3 = self.TDN_R(input_im)
+        
+        # L 分支
+        fea_down1 = self.down1(fea_L1)
+        fea_L = torch.cat([fea_L3, fea_down1], 1)  # B, 8C, H/4, W/4
+        
+        l_feats = self.l_reduce(fea_L)        # B, 4C, H/4, W/4
+        l_feats = self.l_up1(l_feats)          # B, 2C, H/2, W/2
+        l_feats = self.l_up2(l_feats)          # B, C, H, W
+        l_feats = self.l_transformer(l_feats)  # B, C, H, W
+        L = torch.sigmoid(self.l_output(l_feats))  # B, 1, H, W
+        
+        R = torch.sigmoid(R)
+        return R, L

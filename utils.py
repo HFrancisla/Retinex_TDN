@@ -21,6 +21,24 @@ import cv2
 
 from loss import PairedLoss, UnpairedLoss, PureLowSingleLoss, PureLowDoubleLoss
 
+def calculate_psnr(pred, target, max_val=1.0):
+    """计算 PSNR (Peak Signal-to-Noise Ratio)。
+    
+    Args:
+        pred: 预测图像张量 [B, C, H, W]，范围 [0, max_val]
+        target: 目标图像张量 [B, C, H, W]，范围 [0, max_val]
+        max_val: 像素最大值（默认 1.0）
+    
+    Returns:
+        PSNR 值 (dB)
+    """
+    mse = torch.mean((pred - target) ** 2).item()
+    if mse == 0:
+        return float('inf')
+    return 10.0 * torch.log10(torch.tensor(max_val ** 2 / mse)).item()
+
+
+
 
 def load_config(config_path: str) -> dict:
     """
@@ -38,6 +56,7 @@ def load_config(config_path: str) -> dict:
 
     with open(config_path, 'r', encoding='utf-8') as f:
         cfg = yaml.safe_load(f)
+
 
     return cfg
 
@@ -197,6 +216,8 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
     accu_bdsp_loss = torch.zeros(1).to(device)
     accu_smooth_loss = torch.zeros(1).to(device)
     accu_self_recon_loss = torch.zeros(1).to(device)
+    accu_psnr = 0.0
+    psnr_count = 0
 
     optimizer.zero_grad()
 
@@ -331,6 +352,8 @@ def evaluate(model, data_loader, device, lr, filefold_path,
     accu_bdsp_loss = torch.zeros(1).to(device)
     accu_smooth_loss = torch.zeros(1).to(device)
     accu_self_recon_loss = torch.zeros(1).to(device)
+    accu_psnr = 0.0
+    psnr_count = 0
 
     if torch.cuda.is_available():
         loss_function = loss_function.to(device)
@@ -387,6 +410,12 @@ def evaluate(model, data_loader, device, lr, filefold_path,
             loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
                 loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
+            # 计算 PSNR（R_low vs I_high）
+            with torch.no_grad():
+                psnr_val = calculate_psnr(R_low.clamp(0, 1), I_high.clamp(0, 1))
+                accu_psnr += psnr_val
+                psnr_count += 1
+
         accu_total_loss += loss
         accu_recon_loss += loss_recon
         accu_anchor_loss += loss_anchor
@@ -408,11 +437,13 @@ def evaluate(model, data_loader, device, lr, filefold_path,
 
     step_count = max(step + 1, 1) if data_loader.iterable else 0
     if step_count == 0:
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, None)
 
+    avg_psnr = accu_psnr / psnr_count if psnr_count > 0 else None
     return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
             accu_anchor_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
-            accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count)
+            accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count,
+            avg_psnr)
 
 
 def create_lr_scheduler(optimizer,

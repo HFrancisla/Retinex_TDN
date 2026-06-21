@@ -3,17 +3,18 @@ test.py
 
 Retinex 分解推理与跨分量重组评估。
 
-加载训练好的 DecomNet 对 low/high 图像分别分解为 R 和 L，
+加载训练好的 RetinexPointRaw 对 low/high 图像分别分解为 R 和 L，
 再交叉组合（LLxLR、HLxHR 等）保存结果图，用于评估分解的解耦质量。
 """
 
 import torch
 from PIL import Image
 from torchvision import transforms
-from models import DecomNet
+from models import RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans
 import numpy as np
 import cv2
 import os
+import argparse
 import random
 
 
@@ -40,7 +41,11 @@ def main():
     print("path checking complete!")
     print("confirmly find {} images for computing".format(len(images_path_high)))
 
-    model = DecomNet().to(device)
+    model_cls = {"RetinexPointRaw": RetinexPointRaw, "RetinexPixelClassic": RetinexPixelClassic, "RetinexPixelTrans": RetinexPixelTrans}
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="RetinexPointRaw", choices=model_cls.keys())
+    args = parser.parse_args()
+    model = model_cls[args.model]().to(device)
     model_weight_path = r"E:\XUD\Diff-Retinex-main\model\retinexLR-test3max\experiments\LOL_loss_1_1_0.001_test3_20260611-154543\weights\checkpoint_Diff_TDN_100.pth"
     model.load_state_dict(torch.load(model_weight_path, map_location=device)['model'])
     model.eval()

@@ -3,14 +3,15 @@ analyze_model.py
 
 模型参数量与计算量分析。
 
-使用 thop 库统计 DecomNet 的参数量（Params）和浮点运算量（FLOPs），
+使用 thop 库统计 RetinexPointRaw 的参数量（Params）和浮点运算量（FLOPs），
 可选加载权重后对指定尺寸输入进行 profile。
 """
 
 import torch
 from PIL import Image
 from torchvision import transforms
-from models import DecomNet
+from models import RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans
+import argparse
 import numpy as np
 import cv2
 import os
@@ -50,7 +51,11 @@ def main():
     print(f"高光图数量: {len(images_high)}")
 
     # 模型加载 + 测试 Params & FLOPs
-    model = DecomNet().to(device)
+    model_cls = {"RetinexPointRaw": RetinexPointRaw, "RetinexPixelClassic": RetinexPixelClassic, "RetinexPixelTrans": RetinexPixelTrans}
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="RetinexPointRaw", choices=model_cls.keys())
+    args = parser.parse_args()
+    model = model_cls[args.model]().to(device)
 
     model.eval()
     print_model_params_flops(model, input_size=(3, 256, 256), device=device)

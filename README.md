@@ -7,7 +7,7 @@
 ```
 RetinexLR/
 ├── models/                        # 网络模型
-│   ├── network.py                 # DecomNet + TDN backbone
+│   ├── network.py                 # RetinexPoint + TDN backbone
 │   └── wavelets.py                # 可微 DWT / IDWT 小波变换
 ├── data/                          # 数据加载
 │   ├── dataset.py                 # 配对/非配对/纯低光 Dataset
@@ -53,6 +53,8 @@ pip install -r requirements.txt
 ```
 
 图像格式支持 `.jpg` / `.png`。
+
+> **注意：** 训练前请务必确认数据集目录结构与上述一致。代码按固定路径 `train/low`、`train/high`、`test/low`、`test/high` 读取数据，目录名或层级不对会直接报错。
 
 ## 训练
 
@@ -146,7 +148,7 @@ python -m scripts.eval
 
 ## 网络架构
 
-**DecomNet** 接收低光图像，输出：
+**RetinexPoint** 接收低光图像，输出：
 
 - **R**：反射分量（Reflectance），经 sigmoid 约束至 [0, 1]
 - **L**：光照标量（Illumination），经 sigmoid 约束至 [0, 1]，广播至与输入同尺寸
