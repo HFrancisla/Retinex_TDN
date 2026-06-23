@@ -1,7 +1,6 @@
 experiment:
   name: "pure_low_single_night_100k_pixel_trans"
   auto_name: true
-  tag: "night_100k_below_40"
 
 data:
   path: "datasets/BDD_below40"

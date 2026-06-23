@@ -85,7 +85,6 @@ python train.py --config configs/paired/lol_exp1.yaml
 experiment:
   name: "lol_baseline"   # 手动命名（auto_name=false 时必填）
   auto_name: true        # 自动生成
-  tag: ""                # 可选后缀
 ```
 
 **auto_name=true** 时自动生成格式：`{dataset}_{mode}_{损失权重缩写}`
