@@ -95,3 +95,31 @@ class ToTensor(object):
         image = F.to_tensor(image)
         target = F.to_tensor(target)
         return image, target
+
+
+class RandomGamma(object):
+    """随机 gamma 校正，模拟不同曝光水平。"""
+    def __init__(self, gamma_range=(0.7, 1.5)):
+        self.gamma_range = gamma_range
+    def __call__(self, img):
+        gamma = random.uniform(*self.gamma_range)
+        return F.adjust_gamma(img, gamma)
+
+
+class RandomBrightness(object):
+    """随机亮度缩放，模拟不同光照强度。"""
+    def __init__(self, factor_range=(0.6, 1.4)):
+        self.factor_range = factor_range
+    def __call__(self, img):
+        factor = random.uniform(*self.factor_range)
+        return F.adjust_brightness(img, factor)
+
+
+class RandomGaussianNoise(object):
+    """在 tensor 上添加随机高斯噪声。必须在 ToTensor 之后使用。"""
+    def __init__(self, std_range=(0.01, 0.05)):
+        self.std_range = std_range
+    def __call__(self, tensor):
+        std = random.uniform(*self.std_range)
+        noise = torch.randn_like(tensor) * std
+        return (tensor + noise).clamp(0, 1)

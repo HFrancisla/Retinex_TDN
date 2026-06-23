@@ -62,53 +62,99 @@ def load_config(config_path: str) -> dict:
 
 
 # 各模式对应的有效 loss 字段（用于过滤多余配置）
+# 各模式对应的有效 loss 字段（用于过滤多余配置）
 _VALID_LOSS_FIELDS = {
-    'paired': {
+    'paired_point': {
+        'recon_weight_high', 'recon_weight_low',
+        'cross_recon_weight_low', 'cross_recon_weight_high',
+        'equal_r_weight',
+    },
+    'paired_pixel': {
         'recon_weight_high', 'recon_weight_low',
         'cross_recon_weight_low', 'cross_recon_weight_high',
         'smooth_weight', 'equal_r_weight',
     },
-    'unpaired': {
+    'unpaired_point': {
+        'recon_weight', 'anchor_weight', 'bdsp_weight',
+        'self_recon_weight',
+    },
+    'unpaired_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
         'smooth_weight', 'self_recon_weight',
     },
-    'pure_low_double': {
+    'pure_low_double_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
         'self_recon_weight', 'reflect_weight',
     },
-    'pure_low_single': {
+    'pure_low_double_pixel': {
+        'recon_weight', 'anchor_weight', 'bdsp_weight',
+        'smooth_weight', 'self_recon_weight', 'reflect_weight',
+    },
+    'pure_low_single_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
     },
+    'pure_low_single_pixel': {
+        'recon_weight', 'anchor_weight', 'bdsp_weight',
+        'smooth_weight',
+    },
 }
+
+_VALID_MODES = sorted(_VALID_LOSS_FIELDS.keys())
 
 
 def _build_loss_function(loss_cfg):
     """根据 loss_cfg 构建损失模块。
 
-    loss_cfg 中的 'mode' 字段决定使用哪套损失：
-    - 'paired' -> PairedLoss
-    - 'unpaired' -> UnpairedLoss
-    - 'pure_low_single' -> PureLowSingleLoss
-    - 'pure_low_double' -> PureLowDoubleLoss
+    loss_cfg 中的 'mode' 字段必须为以下 8 种之一：
+      paired_point, paired_pixel,
+      unpaired_point, unpaired_pixel,
+      pure_low_double_point, pure_low_double_pixel,
+      pure_low_single_point, pure_low_single_pixel
+
+    mode 格式: {data_mode}_{l_type}，其中 l_type 为 point 或 pixel。
     仅透传当前模式支持的字段，多余字段被忽略并打印警告。
     """
     cfg = dict(loss_cfg or {})
-    mode = cfg.pop('mode', 'unpaired')
+    mode = cfg.pop('mode', None)
 
-    # 过滤：只保留当前模式有效的字段
-    valid = _VALID_LOSS_FIELDS.get(mode, set())
+    if mode is None:
+        raise ValueError(
+            "loss.mode must be explicitly set. Choose from: "
+            + ", ".join(_VALID_MODES)
+        )
+    if mode not in _VALID_MODES:
+        raise ValueError(
+            f"Invalid loss.mode='{mode}'. Choose from: "
+            + ", ".join(_VALID_MODES)
+        )
+
+    # 解析 mode -> data_mode + l_type
+    if mode.endswith('_point'):
+        data_mode = mode[:-len('_point')]
+        l_type = 'point'
+    else:
+        data_mode = mode[:-len('_pixel')]
+        l_type = 'pixel'
+
+    cfg['l_type'] = l_type
+
+    # 过滤无效字段（l_type 始终保留）
+    valid = _VALID_LOSS_FIELDS[mode] | {'l_type'}
     extra = set(cfg.keys()) - valid
     if extra:
-        print(f"[loss] mode='{mode}' 忽略不相关字段: {sorted(extra)}")
+        print(f"[loss] mode='{mode}' ignoring fields: {sorted(extra)}")
         cfg = {k: v for k, v in cfg.items() if k in valid}
 
-    if mode == 'paired':
+    if data_mode == 'paired':
         return PairedLoss(**cfg)
-    if mode == 'pure_low_single':
+    if data_mode == 'pure_low_single':
         return PureLowSingleLoss(**cfg)
-    if mode == 'pure_low_double':
+    if data_mode == 'pure_low_double':
         return PureLowDoubleLoss(**cfg)
-    return UnpairedLoss(**cfg)
+    if data_mode == 'unpaired':
+        return UnpairedLoss(**cfg)
+
+    raise ValueError(f"Cannot parse data_mode from mode='{mode}'")
 
 
 def read_data(root: str, mode: str):

@@ -9,6 +9,12 @@ data:
   batch_size: 4
   num_workers: 0
 
+  # 光度增强：让 view1/view2 经历不同的亮度扰动
+  photometric_augment:
+    enabled: true
+    gamma_range: [0.7, 1.5]        # gamma 校正范围，<1 变亮，>1 变暗
+    brightness_range: [0.6, 1.4]    # 亮度缩放范围
+
 model:
   name: "RetinexPointRaw"
   use_dp: false
@@ -27,6 +33,7 @@ training:
 
 loss:
   # pure_low_double 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight, self_recon_weight, reflect_weight
+  mode: "pure_low_double_point"
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05

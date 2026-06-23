@@ -27,10 +27,10 @@ training:
 
 loss:
   # unpaired 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight, smooth_weight, self_recon_weight
+  mode: "unpaired_point"
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05
-  smooth_weight: 0
   self_recon_weight: 0.05
 
 resume:

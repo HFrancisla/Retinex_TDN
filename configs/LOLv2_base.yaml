@@ -28,12 +28,12 @@ training:
 loss:
   # paired 模式字段: recon_weight_high, recon_weight_low,
   #   cross_recon_weight_low, cross_recon_weight_high, smooth_weight, equal_r_weight
+  mode: "paired_point"
   recon_weight_high: 1.0
   recon_weight_low: 0.3
   cross_recon_weight_low: 0.001
   cross_recon_weight_high: 0.001
   equal_r_weight: 0
-  smooth_weight: 0
 
 resume:
   checkpoint: ""

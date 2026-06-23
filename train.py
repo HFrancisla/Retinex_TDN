@@ -106,7 +106,7 @@ def generate_experiment_name(cfg):
     dataset = os.path.basename(data_path.rstrip("/\\"))
 
     # mode: 优先 loss.mode，缺省 data.mode
-    mode = loss_cfg.get("mode", data_cfg.get("mode", "unpaired"))
+    mode = loss_cfg.get("mode", "unknown")
 
     # 非零损失权重
     parts = []
@@ -154,6 +154,7 @@ def main(args):
                 }
             },
             "loss": {
+                "mode": "unpaired_point",
                 "recon_weight": 1,
                 "anchor_weight": 0.05,
                 "bdsp_weight": 0.05,
@@ -174,7 +175,13 @@ def main(args):
     train_cfg = cfg.get("training", {})
     loss_cfg = cfg.get("loss", {})
     if "mode" not in loss_cfg:
-        loss_cfg["mode"] = data_cfg.get("mode", "unpaired")
+        raise ValueError(
+            "loss.mode must be explicitly set in config. Choose from:\n"
+            "  paired_point, paired_pixel,\n"
+            "  unpaired_point, unpaired_pixel,\n"
+            "  pure_low_double_point, pure_low_double_pixel,\n"
+            "  pure_low_single_point, pure_low_single_pixel"
+        )
     resume_cfg = cfg.get("resume", {})
     device_str = cfg.get("device", "cuda")
 
@@ -245,6 +252,7 @@ def main(args):
                                 transform=data_transform["val"])
     elif data_mode == "pure_low_double":
         from torchvision import transforms as torchvision_T
+        from data.transforms import RandomGamma, RandomBrightness
         data_transform = {
             "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size),
                                               torchvision_T.RandomHorizontalFlip(0.5),
@@ -252,10 +260,24 @@ def main(args):
                                               torchvision_T.ToTensor()]),
             "val": torchvision_T.Compose([torchvision_T.ToTensor()])
         }
+        # 光度增强：仅训练时启用，对两个 view 独立应用
+        aug_cfg = data_cfg.get("photometric_augment", {})
+        photo_transform = None
+        if aug_cfg.get("enabled", False):
+            from torchvision import transforms as torchvision_T2
+            aug_list = []
+            if aug_cfg.get("gamma_range"):
+                aug_list.append(RandomGamma(tuple(aug_cfg["gamma_range"])))
+            if aug_cfg.get("brightness_range"):
+                aug_list.append(RandomBrightness(tuple(aug_cfg["brightness_range"])))
+            if aug_list:
+                photo_transform = torchvision_T2.Compose(aug_list)
         train_dataset = PureLowDataSet(images_low_path=train_low_path,
-                                        transform=data_transform["train"])
+                                        transform=data_transform["train"],
+                                        photometric_transform=photo_transform)
         val_dataset = PureLowDataSet(images_low_path=val_low_path,
-                                      transform=data_transform["val"])
+                                      transform=data_transform["val"],
+                                      photometric_transform=None)
     elif data_mode == "pure_low_single":
         from torchvision import transforms as torchvision_T
         data_transform = {

@@ -30,6 +30,7 @@ training:
     save_best_ckpt: true
 
 loss:
+  mode: "pure_low_single_pixel"
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05

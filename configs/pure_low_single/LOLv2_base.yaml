@@ -27,6 +27,7 @@ training:
 
 loss:
   # pure_low_single 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight
+  mode: "pure_low_single_point"
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05

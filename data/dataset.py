@@ -90,9 +90,10 @@ class PureLowDataSet(Dataset):
     用于无 normal-light 监督的自监督分解训练。
     """
 
-    def __init__(self, images_low_path: list, transform=None):
+    def __init__(self, images_low_path: list, transform=None, photometric_transform=None):
         self.images_low_path = images_low_path
         self.transform = transform
+        self.photometric_transform = photometric_transform
 
     def __len__(self):
         return len(self.images_low_path)
@@ -102,12 +103,21 @@ class PureLowDataSet(Dataset):
         if img.mode != 'RGB':
             raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
 
-        if self.transform is not None:
-            view1 = self.transform(img)
-            view2 = self.transform(img)
+        # 光度增强：对两个 view 独立应用（在空间增强之前，PIL 域）
+        if self.photometric_transform is not None:
+            img1 = self.photometric_transform(img)
+            img2 = self.photometric_transform(img)
         else:
-            view1 = img
-            view2 = img
+            img1 = img
+            img2 = img
+
+        # 空间增强：独立随机裁剪/翻转
+        if self.transform is not None:
+            view1 = self.transform(img1)
+            view2 = self.transform(img2)
+        else:
+            view1 = img1
+            view2 = img2
 
         return view1, view2
 
