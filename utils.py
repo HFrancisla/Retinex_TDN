@@ -410,29 +410,34 @@ def evaluate(model, data_loader, device, lr, filefold_path,
 
     data_loader = tqdm(data_loader, file=sys.stdout)
     for step, data in enumerate(data_loader):
-        if isinstance(loss_function, PureLowSingleLoss):
+        # --- 统一提取 low 图像并分解（所有模式一致）---
+        if isinstance(data, (tuple, list)):
+            I_low = data[0]
+        else:
             I_low = data
-            if torch.cuda.is_available():
-                I_low = I_low.to(device)
+        if torch.cuda.is_available():
+            I_low = I_low.to(device)
 
-            R_low, L_low = model(I_low)
+        R_low, L_low = model(I_low)
 
-            if save_images:
-                R_low_img = tensor2numpy_R(R_low)
-                L_low_img = tensor2numpy_L(L_low)
-                save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
-                save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
+        if save_images:
+            R_low_img = tensor2numpy_R(R_low)
+            L_low_img = tensor2numpy_L(L_low)
+            save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
+            save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
 
+        # --- 损失计算（按模式分支）---
+        if isinstance(loss_function, PureLowSingleLoss):
             loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
                 loss_function(R_low, L_low, I_low)
         else:
-            I_low, I_high = data
-
+            if isinstance(data, (tuple, list)):
+                I_high = data[1]
+            else:
+                I_high = data
             if torch.cuda.is_available():
-                I_low = I_low.to(device)
                 I_high = I_high.to(device)
 
-            R_low, L_low = model(I_low)
             R_high, L_high = model(I_high)
 
             # Skip extra forward pass when self_recon_weight == 0
@@ -443,20 +448,9 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                 L_R_low = None
                 L_R_high = None
 
-            if save_images:
-                R_low_img = tensor2numpy_R(R_low)
-                R_high_img = tensor2numpy_R(R_high)
-                L_low_img = tensor2numpy_L(L_low)
-                L_high_img = tensor2numpy_L(L_high)
-                save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
-                save_pic(R_high_img, evalfold_path, str(step) + "_R_high")
-                save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
-                save_pic(L_high_img, evalfold_path, str(step) + "_L_high")
-
             loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
                 loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
-            # 计算 PSNR（R_low vs I_high）
             with torch.no_grad():
                 psnr_val = calculate_psnr(R_low.clamp(0, 1), I_high.clamp(0, 1))
                 accu_psnr += psnr_val

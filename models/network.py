@@ -475,3 +475,54 @@ class RetinexPixelTrans(nn.Module):
         
         R = torch.sigmoid(R)
         return R, L
+
+# ========================== RetinexPixelTransMinus ========================
+class RetinexPixelTransMinus(nn.Module):
+    """RetinexPixelTransMinus — L 分支使用 fea_down1 - fea_L3 做差版本。
+
+    R 分支与 RetinexPixelTrans 完全相同（TDN Transformer U-Net）。
+    L 分支从 fea_down1 - fea_L3 开始（逐像素做差，dim*4 通道），
+    经过两次上采样、DWTTransformer 处理，输出逐像素光照图。
+    去掉了 RetinexPixelTrans 中的 1x1 通道降维卷积。
+    """
+
+    def __init__(self, dim=24, l_heads=1, l_ffn_expansion=2.66, bias=False, LayerNorm_type='WithBias'):
+        super(RetinexPixelTransMinus, self).__init__()
+        self.TDN_R = TDN(dim=dim)
+        self.down1 = Downsample(dim * 2)
+
+        # 两次上采样：4C -> 2C -> C
+        self.l_up1 = Upsample(dim * 4)  # 4C -> 2C, H/4 -> H/2
+        self.l_up2 = Upsample(dim * 2)  # 2C -> C, H/2 -> H
+
+        # DWTTransformer 处理全分辨率特征 (1 block, 对称 encoder_level1)
+        self.l_transformer = DWTTransformer(
+            dim=dim,
+            num_heads=l_heads,
+            num_blocks=1,
+            ffn_expansion_factor=l_ffn_expansion,
+            bias=bias,
+            LayerNorm_type=LayerNorm_type
+        )
+
+        # 最终输出：C -> 1
+        self.l_output = nn.Conv2d(dim, 1, kernel_size=3, stride=1, padding=1, bias=bias)
+
+    def forward(self, input_im):
+        R, fea_L1, fea_L2, fea_L3 = self.TDN_R(input_im)
+
+        # L 分支：做差
+        fea_down1 = self.down1(fea_L1)
+        l_feats = fea_down1 - fea_L3  # B, 4C, H/4, W/4
+
+        l_feats = self.l_up1(l_feats)          # B, 2C, H/2, W/2
+        l_feats = self.l_up2(l_feats)          # B, C, H, W
+        l_feats = self.l_transformer(l_feats)  # B, C, H, W
+        L = torch.sigmoid(self.l_output(l_feats))  # B, 1, H, W
+
+        R = torch.sigmoid(R)
+        return R, L
+
+
+
+
