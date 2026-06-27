@@ -233,10 +233,29 @@ def read_pure_low_data(root: str):
     assert os.path.exists(val_root), "val root: {} does not exist.".format(val_root)
 
     supported = [".jpg", ".JPG", ".png", ".PNG"]
+
+    # 兼容性：如果不存在 low/high 子目录，直接使用 images 目录
     train_low_root = os.path.join(train_root, "low")
+    if not os.path.exists(train_low_root):
+        images_root = os.path.join(train_root, "images")
+        if os.path.exists(images_root):
+            print(f"[read_pure_low_data] '{train_low_root}' not found, fallback to '{images_root}'")
+            train_low_root = images_root
+        else:
+            raise FileNotFoundError(
+                f"Neither '{train_low_root}' nor '{images_root}' exists."
+            )
+
     val_low_root = os.path.join(val_root, "low")
-    assert os.path.exists(train_low_root), "train low root: {} does not exist.".format(train_low_root)
-    assert os.path.exists(val_low_root), "val low root: {} does not exist.".format(val_low_root)
+    if not os.path.exists(val_low_root):
+        images_root = os.path.join(val_root, "images")
+        if os.path.exists(images_root):
+            print(f"[read_pure_low_data] '{val_low_root}' not found, fallback to '{images_root}'")
+            val_low_root = images_root
+        else:
+            raise FileNotFoundError(
+                f"Neither '{val_low_root}' nor '{images_root}' exists."
+            )
 
     train_low_path = sorted(
         [os.path.join(train_low_root, i) for i in os.listdir(train_low_root)

@@ -193,8 +193,9 @@ def main(args):
     # ---- 生成实验目录名 ----
     experiment_name = generate_experiment_name(cfg)
     model_name = model_cfg.get("name", "RetinexPointRaw")
+    data_mode = data_cfg.get("mode", "unknown")
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    filefold_path = f"./experiments/{model_name}/{experiment_name}_{timestamp}"
+    filefold_path = f"./experiments/{model_name}/{data_mode}/{experiment_name}_{timestamp}"
     os.makedirs(filefold_path, exist_ok=True)
 
     file_img_path = os.path.join(filefold_path, "img")
