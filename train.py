@@ -27,7 +27,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
 from data import MyDataSet, UnpairedDataSet, PureLowDataSet, PureLowSingleDataSet, transforms as T
-from models import RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans
+from models import RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans, RetinexPixelTransMinus
 from utils import read_data, read_pure_low_data, train_step, evaluate, create_lr_scheduler, load_config, _build_loss_function
 
 class Tee:
@@ -336,6 +336,12 @@ def main(args):
         ).to(device)
     elif model_name == "RetinexPixelTrans":
         model = RetinexPixelTrans(
+            dim=model_cfg.get("dim", 24),
+            l_heads=model_cfg.get("l_heads", 1),
+            l_ffn_expansion=model_cfg.get("l_ffn_expansion", 2.66),
+        ).to(device)
+    elif model_name == "RetinexPixelTransMinus":
+        model = RetinexPixelTransMinus(
             dim=model_cfg.get("dim", 24),
             l_heads=model_cfg.get("l_heads", 1),
             l_ffn_expansion=model_cfg.get("l_ffn_expansion", 2.66),
