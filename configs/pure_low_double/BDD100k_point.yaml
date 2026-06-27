@@ -1,13 +1,19 @@
 experiment:
-  name: "unpaired"
+  name: "pure_low_double_bdd100k_point"
   auto_name: true
 
 data:
-  path: "datasets/LOLv2"
-  mode: "unpaired"
-  crop_size: 384
+  path: "datasets/BDD_below40"
+  mode: "pure_low_double"
+  crop_size: 512
   batch_size: 2
-  num_workers: 0
+  num_workers: 4
+
+  # 光度增强：让 view1/view2 经历不同的亮度扰动
+  photometric_augment:
+    enabled: true
+    gamma_range: [0.7, 1.5]        # gamma 校正范围，<1 变亮，>1 变暗
+    brightness_range: [0.6, 1.4]    # 亮度缩放范围
 
 model:
   name: "RetinexPointRaw"
@@ -26,12 +32,13 @@ training:
     save_best_ckpt: true
 
 loss:
-  # unpaired 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight, smooth_weight, self_recon_weight
-  mode: "unpaired_point"
+  # pure_low_double_point 模式: recon_weight, anchor_weight, bdsp_weight, self_recon_weight, reflect_weight
+  mode: "pure_low_double_point"
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05
   self_recon_weight: 0.05
+  reflect_weight: 0.05
 
 resume:
   checkpoint: ""

@@ -6,7 +6,7 @@ data:
   path: "datasets/LOLv2"
   mode: "paired"            # 训练模式: "paired" / "unpaired" / "pure_low_single" / "pure_low_double"
   crop_size: 384
-  batch_size: 4
+  batch_size: 2
   num_workers: 0
 
 model:

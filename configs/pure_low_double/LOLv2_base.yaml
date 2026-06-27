@@ -6,7 +6,7 @@ data:
   path: "datasets/LOLv2"
   mode: "pure_low_double"
   crop_size: 384
-  batch_size: 4
+  batch_size: 2
   num_workers: 0
 
   # 光度增强：让 view1/view2 经历不同的亮度扰动
