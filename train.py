@@ -346,8 +346,14 @@ def main(args):
             l_heads=model_cfg.get("l_heads", 1),
             l_ffn_expansion=model_cfg.get("l_ffn_expansion", 2.66),
         ).to(device)
-    else:
+    elif model_name == "RetinexPointRaw":
         model = RetinexPointRaw().to(device)
+    else:
+        raise ValueError(
+            f"Unknown model name: '{model_name}'. "
+            f"Supported: RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans, RetinexPixelTransMinus. "
+            f"Please check your config YAML → model.name."
+        )
     use_dp = model_cfg.get("use_dp", False)
     if use_dp:
         model = torch.nn.DataParallel(model).cuda()

@@ -10,7 +10,7 @@ Retinex 分解推理与跨分量重组评估。
 import torch
 from PIL import Image
 from torchvision import transforms
-from models import RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans
+from models import RetinexPointRaw, RetinexPixelClassic, RetinexPixelTrans, RetinexPixelTransMinus
 import numpy as np
 import cv2
 import os
@@ -41,7 +41,12 @@ def main():
     print("path checking complete!")
     print("confirmly find {} images for computing".format(len(images_path_high)))
 
-    model_cls = {"RetinexPointRaw": RetinexPointRaw, "RetinexPixelClassic": RetinexPixelClassic, "RetinexPixelTrans": RetinexPixelTrans}
+    model_cls = {
+        "RetinexPointRaw": RetinexPointRaw,
+        "RetinexPixelClassic": RetinexPixelClassic,
+        "RetinexPixelTrans": RetinexPixelTrans,
+        "RetinexPixelTransMinus": RetinexPixelTransMinus,
+    }
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="RetinexPointRaw", choices=model_cls.keys())
     args = parser.parse_args()
