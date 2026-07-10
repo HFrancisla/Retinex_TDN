@@ -106,8 +106,14 @@ def generate_experiment_name(cfg):
     data_path = data_cfg.get("path", "unknown")
     dataset = os.path.basename(data_path.rstrip("/\\"))
 
-    # mode: 优先 loss.mode，缺省 data.mode
-    mode = loss_cfg.get("mode", "unknown")
+    # mode: 只取 _pixel / _point 后缀（data_mode 已在目录路径中）
+    full_mode = loss_cfg.get("mode", "unknown")
+    if full_mode.endswith('_pixel'):
+        mode = 'pixel'
+    elif full_mode.endswith('_point'):
+        mode = 'point'
+    else:
+        mode = full_mode  # 兜底
 
     # 非零损失权重
     parts = []
@@ -153,7 +159,7 @@ def main(args):
                     "eval_interval": 500,
                     "save_best_ckpt": True,
                     "keep_top_ckpt": 2,
-                    "max_save_images": 500
+                    "max_save_images": 250
                 }
             },
             "loss": {
@@ -408,7 +414,7 @@ def main(args):
 
     # 磁盘清理策略
     keep_top_ckpt = eval_cfg.get("keep_top_ckpt", 2)      # 保留 top-N checkpoint 权重（0=全部保留）
-    max_save_images = eval_cfg.get("max_save_images", 500) # 每次 eval 最多保存图像数
+    max_save_images = eval_cfg.get("max_save_images", 250) # 每次 eval 最多保存图像数
 
     # 追踪已保存的 checkpoint 和可视化文件夹，用于后续清理
     saved_ckpt_files = []   # [(val_loss, global_iter, filepath), ...]
@@ -558,7 +564,7 @@ def main(args):
                         print(f"[cleanup] Removed visualization folder: {worst_folder}")
 
         # ---- 定期保存 checkpoint ----
-        if global_iter % save_ckpt_interval == 0:
+        if save_ckpt_interval > 0 and global_iter % save_ckpt_interval == 0:
             loss_str = f"{last_val_loss:.4f}" if last_val_loss != float('inf') else "na"
             ckpt_name = f"checkpoint_{global_iter}_loss{loss_str}.pth"
             ckpt_path = os.path.join(file_weights_path, ckpt_name)

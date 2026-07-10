@@ -1,5 +1,5 @@
 experiment:
-  name: "pure_low_single_lolv2_pixel_classic"
+  name: "pure_low_single_lolv2_pixel_trans_minus"
   auto_name: true
 
 data:
@@ -10,20 +10,21 @@ data:
   num_workers: 0
 
 model:
-  name: "RetinexPixelClassic"
+  name: "RetinexPixelTransMinus"
   dim: 24
-  l_channel: 32
+  l_heads: 1
+  l_ffn_expansion: 2.66
   use_dp: false
   gpu_id: "0"
 
 training:
-  max_iterations: 20000
+  max_iterations: 10000
   lr: 0.0001
   warmup_iterations: 1000
   log_interval: 1000
-  save_ckpt_interval: 5000
+  save_ckpt_interval: 0
   eval:
-    eval_interval: 1000
+    eval_interval: 500
     save_img_interval: 5000
     save_best_ckpt: true
 

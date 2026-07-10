@@ -138,8 +138,18 @@ def _build_loss_function(loss_cfg):
 
     cfg['l_type'] = l_type
 
+    # 校验：所有必填字段必须显式声明
+    required = _VALID_LOSS_FIELDS[mode]  # 不含 l_type，它由代码自动注入
+    missing = required - set(cfg.keys())
+    if missing:
+        raise ValueError(
+            f"loss.mode='{mode}' 要求显式声明以下字段，但 config 中缺失：\n"
+            + "\n".join(f"  {f}" for f in sorted(missing))
+            + f"\n\n请参考 _VALID_LOSS_FIELDS['{mode}'] = {sorted(required)} 补全。"
+        )
+
     # 过滤无效字段（l_type 始终保留）
-    valid = _VALID_LOSS_FIELDS[mode] | {'l_type'}
+    valid = required | {'l_type'}
     extra = set(cfg.keys()) - valid
     if extra:
         print(f"[loss] mode='{mode}' ignoring fields: {sorted(extra)}")
@@ -405,7 +415,7 @@ def train_step(model, optimizer, loss_function, data, device, lr_scheduler):
 @torch.no_grad()
 def evaluate(model, data_loader, device, lr, filefold_path,
              loss_function=None, loss_cfg=None, save_images=False, global_iter=0,
-             max_save_images=500):
+             max_save_images=250):
 
     if loss_function is None:
         loss_function = _build_loss_function(loss_cfg)

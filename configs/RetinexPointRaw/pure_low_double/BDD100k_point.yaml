@@ -1,13 +1,13 @@
 experiment:
-  name: "pure_low_double_v2"
+  name: "pure_low_double_bdd100k_point"
   auto_name: true
 
 data:
-  path: "datasets/LOLv2"
+  path: "datasets/BDD_below40"
   mode: "pure_low_double"
-  crop_size: 384
-  batch_size: 2
-  num_workers: 0
+  crop_size: 512
+  batch_size: 4
+  num_workers: 4
 
   # 光度增强：让 view1/view2 经历不同的亮度扰动
   photometric_augment:
@@ -21,18 +21,18 @@ model:
   gpu_id: "0"
 
 training:
-  max_iterations: 100000
+  max_iterations: 10000
   lr: 0.0001
   warmup_iterations: 1000       # 线性 warmup 步数
   log_interval: 1000        # 每 N 步打印训练日志
-  save_ckpt_interval: 10000     # 每 N 步保存 checkpoint
+  save_ckpt_interval: 0
   eval:
-    eval_interval: 2000
-    save_img_interval: 10000  # 每 N 步保存可视化图片（必须是 eval.eval_interval 的整数倍）
+    eval_interval: 500
+    save_img_interval: 5000  # 每 N 步保存可视化图片（必须是 eval.eval_interval 的整数倍）
     save_best_ckpt: true
 
 loss:
-  # pure_low_double 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight, self_recon_weight, reflect_weight
+  # pure_low_double_point 模式: recon_weight, anchor_weight, bdsp_weight, self_recon_weight, reflect_weight
   mode: "pure_low_double_point"
   recon_weight: 1
   anchor_weight: 0.05

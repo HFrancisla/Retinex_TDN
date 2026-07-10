@@ -2,4 +2,4 @@ _docs/
 datasets/
 experiments/
 *.pyc
-_compare/
+_compare/html/

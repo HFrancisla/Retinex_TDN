@@ -212,11 +212,7 @@ class UnpairedLoss(nn.Module):
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
         self.self_recon_weight = self_recon_weight
-        # pixel 模式默认开启 smooth（用户未显式设置时）
-        if l_type == 'pixel' and smooth_weight == 0:
-            self.smooth_weight = 0.1
-        else:
-            self.smooth_weight = smooth_weight
+        self.smooth_weight = smooth_weight
 
     @property
     def use_smooth(self):
@@ -286,10 +282,7 @@ class PureLowDoubleLoss(nn.Module):
         self.bdsp_weight = bdsp_weight
         self.self_recon_weight = self_recon_weight
         self.reflect_weight = reflect_weight
-        if l_type == 'pixel' and smooth_weight == 0:
-            self.smooth_weight = 0.1
-        else:
-            self.smooth_weight = smooth_weight
+        self.smooth_weight = smooth_weight
 
     @property
     def use_smooth(self) -> bool:
@@ -360,10 +353,7 @@ class PureLowSingleLoss(nn.Module):
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
-        if l_type == 'pixel' and smooth_weight == 0:
-            self.smooth_weight = 0.1
-        else:
-            self.smooth_weight = smooth_weight
+        self.smooth_weight = smooth_weight
 
     @property
     def use_smooth(self) -> bool:
