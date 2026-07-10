@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Retinex-TDN 损失函数讲解</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #52606d;
+      --line: #d8e1e7;
+      --panel: #ffffff;
+      --accent: #0f766e;
+      --accent-soft: #e7f4f1;
+      --code: #102a43;
+      --shadow: 0 18px 50px rgba(23, 32, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #f8fafc 0%, #eef5f6 48%, #f8fafc 100%);
+      line-height: 1.62;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .shell {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 32px 22px 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: center;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .source-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.72);
+      white-space: nowrap;
+    }
+
+    code,
+    .formula {
+      color: var(--code);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.94em;
+    }
+
+    .loss-table .note-row td {
+      width: auto;
+      color: var(--muted);
+      background: #fbfdfe;
+      font-size: 12px;
+      font-weight: 400;
+    }
+
+    .loss-table .note-row code {
+      font-weight: 700;
+    }
+
+    .tabs {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 12px 0;
+      margin: 20px 0 14px;
+      background: rgba(248, 250, 252, 0.94);
+      backdrop-filter: blur(12px);
+    }
+
+    .tab {
+      min-height: 64px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 14px 13px;
+      text-align: left;
+      box-shadow: 0 8px 26px rgba(23, 32, 42, 0.05);
+    }
+
+    .tab strong {
+      font-size: 15px;
+      line-height: 1.2;
+    }
+
+    .tab[aria-selected="true"] {
+      border-color: rgba(15, 118, 110, 0.45);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.18);
+    }
+
+    .loss-panel {
+      display: none;
+      margin-top: 14px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: var(--shadow);
+    }
+
+    .loss-panel.active {
+      display: block;
+    }
+
+    .panel-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0 0 6px;
+      font-size: 24px;
+      letter-spacing: 0;
+      line-height: 1.2;
+    }
+
+    .small {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mode-toggle {
+      display: inline-grid;
+      grid-template-columns: 1fr 1fr;
+      width: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #f8fbfc;
+    }
+
+    .mode-toggle button {
+      min-height: 40px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .mode-toggle button.active {
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .variant {
+      display: none;
+    }
+
+    .variant.active {
+      display: block;
+    }
+
+    .variant-title {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: baseline;
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .variant-title strong {
+      color: var(--ink);
+      font-size: 16px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .loss-table {
+      width: 100%;
+      min-width: 980px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .loss-table th,
+    .loss-table td {
+      padding: 12px 11px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .loss-table th {
+      color: var(--muted);
+      background: #f6fafb;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .loss-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .loss-table td:nth-child(1) {
+      width: 18%;
+      font-weight: 800;
+    }
+
+    .loss-table td:nth-child(2) {
+      width: 19%;
+      color: var(--muted);
+    }
+
+    .loss-table td:nth-child(3) {
+      width: 35%;
+    }
+
+    .loss-table td:nth-child(4) {
+      width: 28%;
+      color: var(--muted);
+    }
+
+    .formula {
+      display: block;
+      margin: 0;
+      white-space: pre-wrap;
+      line-height: 1.55;
+    }
+
+    footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 920px) {
+      header,
+      .panel-head {
+        grid-template-columns: 1fr;
+      }
+
+      .source-pill {
+        white-space: normal;
+      }
+
+      .tabs {
+        position: static;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .mode-toggle {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .shell {
+        padding: 22px 14px 42px;
+      }
+
+      .tabs {
+        grid-template-columns: 1fr;
+      }
+
+      .loss-panel {
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">Retinex-TDN decomposition losses</p>
+      </div>
+      <div class="source-pill">代码来源：<code>loss/decomposition_loss.py</code>、<code>loss/bsdp.py</code></div>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="四类损失函数">
+      <button class="tab" type="button" role="tab" aria-selected="true" aria-controls="paired" data-tab="paired">
+        <strong>PairedLoss</strong>
+      </button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="unpaired" data-tab="unpaired">
+        <strong>UnpairedLoss</strong>
+      </button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="double" data-tab="double">
+        <strong>PureLowDoubleLoss</strong>
+      </button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="single" data-tab="single">
+        <strong>PureLowSingleLoss</strong>
+      </button>
+    </nav>
+
+    <section id="paired" class="loss-panel active" role="tabpanel">
+      <div class="panel-head">
+        <div>
+          <h2>PairedLoss：成对 low/high 分解损失</h2>
+          <p class="small">成对监督使用自重建、交叉重建和 R 一致性；逐像素 L 用于表达局部照明变化。</p>
+        </div>
+        <div class="mode-toggle" data-toggle-for="paired" aria-label="PairedLoss point pixel 切换">
+          <button type="button" class="active" data-variant="point">Point</button>
+          <button type="button" data-variant="pixel">Pixel</button>
+        </div>
+      </div>
+
+      <article class="variant active" data-panel="paired" data-kind="point">
+        <p class="variant-title"><strong>paired_point</strong><span>L 为标量 <code>[B,1,1,1]</code>，用于全局光照分解。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>high 自重建</td>
+                <td><code>recon_weight_high = 1.0</code></td>
+                <td><pre class="formula">L1(R_high ⊙ rep3(L_high), I_high)</pre></td>
+                <td>约束正常光样本由自身 R/L 重组回 <code>I_high</code>，保证分解不偏离原图，并固定 R 与 L 的基本尺度关系。</td>
+              </tr>
+              <tr>
+                <td>low 自重建</td>
+                <td><code>recon_weight_low = 0.3</code></td>
+                <td><pre class="formula">L1(R_low ⊙ rep3(L_low), I_low)</pre></td>
+                <td>约束低光样本由自身 R/L 重组回 <code>I_low</code>；权重较低，减少低光噪声和曝光不足对分解的过强牵引。</td>
+              </tr>
+              <tr>
+                <td>交叉重建 low</td>
+                <td><code>cross_recon_weight_low = 0.001</code></td>
+                <td><pre class="formula">L1(R_high ⊙ rep3(L_low), I_low)</pre></td>
+                <td>用正常光反射配低光光照重建 <code>I_low</code>，检验 R 是否主要保存结构与颜色，而不是携带亮度。</td>
+              </tr>
+              <tr>
+                <td>交叉重建 high</td>
+                <td><code>cross_recon_weight_high = 0.001</code></td>
+                <td><pre class="formula">L1(R_low ⊙ rep3(L_high), I_high)</pre></td>
+                <td>用低光反射配正常光光照重建 <code>I_high</code>，与上一项共同推动 R/L 解耦并可交换组合。</td>
+              </tr>
+              <tr>
+                <td>equal_R</td>
+                <td><code>equal_r_weight = 0.1</code></td>
+                <td><pre class="formula">L1(R_low, sg(R_high))</pre></td>
+                <td>拉近同一场景 low/high 的反射图，使材质、纹理和边缘主要落在 R；<code>sg</code> 端作为停止梯度的目标。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>sg(.)</code> 表示 <code>detach()</code>。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="variant" data-panel="paired" data-kind="pixel">
+        <p class="variant-title"><strong>paired_pixel</strong><span>L 为逐像素图 <code>[B,1,H,W]</code>，用于建模 low/high 的空间光照分布。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>high 自重建</td>
+                <td><code>recon_weight_high = 1.0</code></td>
+                <td><pre class="formula">L1(R_high ⊙ rep3(L_high), I_high)</pre></td>
+                <td>约束正常光样本由自身 R 和逐像素 L 重组回 <code>I_high</code>，保证局部光照图仍服务于原图重建。</td>
+              </tr>
+              <tr>
+                <td>low 自重建</td>
+                <td><code>recon_weight_low = 0.3</code></td>
+                <td><pre class="formula">L1(R_low ⊙ rep3(L_low), I_low)</pre></td>
+                <td>约束低光样本由自身 R/L 重组回 <code>I_low</code>；权重较低，减少低光噪声和曝光不足对分解的过强牵引。</td>
+              </tr>
+              <tr>
+                <td>交叉重建 low</td>
+                <td><code>cross_recon_weight_low = 0.001</code></td>
+                <td><pre class="formula">L1(R_high ⊙ rep3(L_low), I_low)</pre></td>
+                <td>用正常光反射配低光光照重建 <code>I_low</code>，检验 R 是否主要保存结构与颜色，而不是携带亮度。</td>
+              </tr>
+              <tr>
+                <td>交叉重建 high</td>
+                <td><code>cross_recon_weight_high = 0.001</code></td>
+                <td><pre class="formula">L1(R_low ⊙ rep3(L_high), I_high)</pre></td>
+                <td>用低光反射配正常光光照重建 <code>I_high</code>，与上一项共同推动 R/L 解耦并可交换组合。</td>
+              </tr>
+              <tr>
+                <td>equal_R</td>
+                <td><code>equal_r_weight = 0.1</code></td>
+                <td><pre class="formula">L1(R_low, sg(R_high))</pre></td>
+                <td>拉近同一场景 low/high 的反射图，使材质、纹理和边缘主要落在 R；<code>sg</code> 端作为停止梯度的目标。</td>
+              </tr>
+              <tr>
+                <td>Retinex smooth</td>
+                <td><code>smooth_weight = 0.1</code></td>
+                <td><pre class="formula">Smooth(L_low, R_low) + Smooth(L_high, R_high)</pre></td>
+                <td>惩罚 L 的空间起伏，并在 R 的强边缘处降低惩罚；让光照缓慢变化，纹理和细节留给 R。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>sg(.)</code> 表示 <code>detach()</code>。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section id="unpaired" class="loss-panel" role="tabpanel">
+      <div class="panel-head">
+        <div>
+          <h2>UnpairedLoss：非配对 low/high 分解损失</h2>
+          <p class="small">没有同场景配对关系，所以不使用交叉重建和 equal_R；改用重建、anchor、BDSP 和 self recon。</p>
+        </div>
+        <div class="mode-toggle" data-toggle-for="unpaired" aria-label="UnpairedLoss point pixel 切换">
+          <button type="button" class="active" data-variant="point">Point</button>
+          <button type="button" data-variant="pixel">Pixel</button>
+        </div>
+      </div>
+
+      <article class="variant active" data-panel="unpaired" data-kind="point">
+        <p class="variant-title"><strong>unpaired_point</strong><span>L 为标量，anchor 约束 <code>L</code> 接近 <code>max_c(I)</code>。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>low/high 重建</td>
+                <td><code>recon_weight = 1</code></td>
+                <td><pre class="formula">L1(R_low ⊙ rep3(L_low), I_low)
++ L1(R_high ⊙ rep3(L_high), I_high)</pre></td>
+                <td>分别用各自 R/L 重组 low 与 high 输入，提供非配对训练的基础自监督信号，防止分解结果脱离原图。</td>
+              </tr>
+              <tr>
+                <td>AnchorPoint</td>
+                <td><code>anchor_weight = 0.05</code></td>
+                <td><pre class="formula">L1(max_c(I_low), expand(L_low))
++ L1(max_c(I_high), expand(L_high))</pre></td>
+                <td>用输入亮度最大通道给标量 L 定尺度，避免 L 过暗或过亮后由 R 被动补偿。</td>
+              </tr>
+              <tr>
+                <td>BDSP 结构保持</td>
+                <td><code>bdsp_weight = 0.05</code></td>
+                <td><pre class="formula">L1(BDSP_Face(R_low), BDSP_Face(I_low))
++ L1(BDSP_Face(R_high), BDSP_Face(I_high))</pre></td>
+                <td>让 R 的边缘响应贴近输入图，保留轮廓和局部结构，避免反射分量过度平滑或丢边。</td>
+              </tr>
+              <tr>
+                <td>Self recon</td>
+                <td><code>self_recon_weight = 0.05</code></td>
+                <td><pre class="formula">L1(L_R_low, L_R_high)</pre></td>
+                <td>将反射图再次分解得到二次 L，并约束 low/high 的二次光照一致，减少非配对样本间的分解漂移。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="variant" data-panel="unpaired" data-kind="pixel">
+        <p class="variant-title"><strong>unpaired_pixel</strong><span>L 为逐像素图，anchor 只约束平均亮度，避免逐像素亮度拷贝。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>low/high 重建</td>
+                <td><code>recon_weight = 1</code></td>
+                <td><pre class="formula">L1(R_low ⊙ rep3(L_low), I_low)
++ L1(R_high ⊙ rep3(L_high), I_high)</pre></td>
+                <td>分别用各自 R/L 重组 low 与 high 输入，提供非配对训练的基础自监督信号，防止分解结果脱离原图。</td>
+              </tr>
+              <tr>
+                <td>AnchorPixel</td>
+                <td><code>anchor_weight = 0.05</code></td>
+                <td><pre class="formula">L1(mean_hw(max_c(I_low)), mean_hw(L_low))
++ L1(mean_hw(max_c(I_high)), mean_hw(L_high))</pre></td>
+                <td>只约束 L 的全图平均亮度，固定整体曝光尺度，同时保留局部光照变化自由度。</td>
+              </tr>
+              <tr>
+                <td>BDSP 结构保持</td>
+                <td><code>bdsp_weight = 0.05</code></td>
+                <td><pre class="formula">L1(BDSP_Face(R_low), BDSP_Face(I_low))
++ L1(BDSP_Face(R_high), BDSP_Face(I_high))</pre></td>
+                <td>让 R 的边缘响应贴近输入图，保留轮廓和局部结构，避免反射分量过度平滑或丢边。</td>
+              </tr>
+              <tr>
+                <td>Self recon</td>
+                <td><code>self_recon_weight = 0.05</code></td>
+                <td><pre class="formula">L1(L_R_low, L_R_high)</pre></td>
+                <td>将反射图再次分解得到二次 L，并约束 low/high 的二次光照一致，减少非配对样本间的分解漂移。</td>
+              </tr>
+              <tr>
+                <td>Retinex smooth</td>
+                <td><code>smooth_weight = 0</code></td>
+                <td><pre class="formula">Smooth(L_low, R_low) + Smooth(L_high, R_high)</pre></td>
+                <td>抑制逐像素 L 的高频噪声，使光照图表达平滑照明而不是纹理细节。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图；<code>mean_hw(.)</code> 表示空间均值。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section id="double" class="loss-panel" role="tabpanel">
+      <div class="panel-head">
+        <div>
+          <h2>PureLowDoubleLoss：仅 low 双视图自监督损失</h2>
+          <p class="small">一张低光图构造两个增强 view；该类独有 reflect 项，用双向 detach 约束两个 view 的 R 一致。</p>
+        </div>
+        <div class="mode-toggle" data-toggle-for="double" aria-label="PureLowDoubleLoss point pixel 切换">
+          <button type="button" class="active" data-variant="point">Point</button>
+          <button type="button" data-variant="pixel">Pixel</button>
+        </div>
+      </div>
+
+      <article class="variant active" data-panel="double" data-kind="point">
+        <p class="variant-title"><strong>pure_low_double_point</strong><span>两个 view 分别输出标量 L，用于双视图全局光照分解。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>双视图重建</td>
+                <td><code>recon_weight = 1.0</code></td>
+                <td><pre class="formula">L1(R1 ⊙ rep3(L1), I1)
++ L1(R2 ⊙ rep3(L2), I2)</pre></td>
+                <td>两个增强 view 都要由各自 R/L 重组回输入，确保增强后的视图仍能被同一分解框架解释。</td>
+              </tr>
+              <tr>
+                <td>AnchorPoint</td>
+                <td><code>anchor_weight = 0.05</code></td>
+                <td><pre class="formula">L1(max_c(I1), expand(L1))
++ L1(max_c(I2), expand(L2))</pre></td>
+                <td>给两个 view 的标量 L 分别定亮度尺度，避免双视图训练中 R/L 比例任意漂移。</td>
+              </tr>
+              <tr>
+                <td>BDSP 结构保持</td>
+                <td><code>bdsp_weight = 0.05</code></td>
+                <td><pre class="formula">L1(BDSP_Face(R1), BDSP_Face(I1))
++ L1(BDSP_Face(R2), BDSP_Face(I2))</pre></td>
+                <td>让两个 view 的 R 都保留各自输入的边缘结构，使反射分量承载稳定内容而非仅拟合亮度。</td>
+              </tr>
+              <tr>
+                <td>Self recon</td>
+                <td><code>self_recon_weight = 0.05</code></td>
+                <td><pre class="formula">L1(LR1, LR2)</pre></td>
+                <td>对两个 view 的 R 再分解并对齐二次 L，要求同一内容在增强前后得到相近的光照解释。</td>
+              </tr>
+              <tr>
+                <td>Reflect</td>
+                <td><code>reflect_weight = 0.0</code></td>
+                <td><pre class="formula">L1(R1, sg(R2)) + L1(R2, sg(R1))</pre></td>
+                <td>直接拉近两个 view 的 R，强化同一低光内容的反射一致性；双向 <code>sg</code> 让每次只更新预测侧。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图；<code>sg(.)</code> 表示 <code>detach()</code>。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="variant" data-panel="double" data-kind="pixel">
+        <p class="variant-title"><strong>pure_low_double_pixel</strong><span>两个 view 分别输出逐像素 L，用于对齐双视图的局部光照解释。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>双视图重建</td>
+                <td><code>recon_weight = 1.0</code></td>
+                <td><pre class="formula">L1(R1 ⊙ rep3(L1), I1)
++ L1(R2 ⊙ rep3(L2), I2)</pre></td>
+                <td>两个增强 view 都要由各自 R/L 重组回输入，确保逐像素光照图仍围绕原图解释，而不是自由漂移。</td>
+              </tr>
+              <tr>
+                <td>AnchorPixel</td>
+                <td><code>anchor_weight = 0.05</code></td>
+                <td><pre class="formula">L1(mean_hw(max_c(I1)), mean_hw(L1))
++ L1(mean_hw(max_c(I2)), mean_hw(L2))</pre></td>
+                <td>只锚定每个 view 的平均亮度，保留局部照明差异，同时降低 L 直接复制纹理的风险。</td>
+              </tr>
+              <tr>
+                <td>BDSP 结构保持</td>
+                <td><code>bdsp_weight = 0.05</code></td>
+                <td><pre class="formula">L1(BDSP_Face(R1), BDSP_Face(I1))
++ L1(BDSP_Face(R2), BDSP_Face(I2))</pre></td>
+                <td>让两个 view 的 R 都保留各自输入的边缘结构，使反射分量承载稳定内容而非仅拟合亮度。</td>
+              </tr>
+              <tr>
+                <td>Self recon</td>
+                <td><code>self_recon_weight = 0.05</code></td>
+                <td><pre class="formula">L1(LR1, LR2)</pre></td>
+                <td>对两个 view 的 R 再分解并对齐二次 L，要求同一内容在增强前后得到相近的光照解释。</td>
+              </tr>
+              <tr>
+                <td>Reflect</td>
+                <td><code>reflect_weight = 0.0</code></td>
+                <td><pre class="formula">L1(R1, sg(R2)) + L1(R2, sg(R1))</pre></td>
+                <td>直接拉近两个 view 的 R，强化同一低光内容的反射一致性；双向 <code>sg</code> 让每次只更新预测侧。</td>
+              </tr>
+              <tr>
+                <td>Retinex smooth</td>
+                <td><code>smooth_weight = 0</code></td>
+                <td><pre class="formula">Smooth(L1, R1) + Smooth(L2, R2)</pre></td>
+                <td>抑制两个 L 图中的高频抖动，并在 R 的边缘处保留合理跳变，使局部照明更稳定。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图；<code>mean_hw(.)</code> 表示空间均值；<code>sg(.)</code> 表示 <code>detach()</code>。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section id="single" class="loss-panel" role="tabpanel">
+      <div class="panel-head">
+        <div>
+          <h2>PureLowSingleLoss：仅 low 单视图自监督损失</h2>
+          <p class="small">最轻量的 low-only 训练目标：重建、anchor、BDSP；逐像素 L 用于表达单图局部照明。</p>
+        </div>
+        <div class="mode-toggle" data-toggle-for="single" aria-label="PureLowSingleLoss point pixel 切换">
+          <button type="button" class="active" data-variant="point">Point</button>
+          <button type="button" data-variant="pixel">Pixel</button>
+        </div>
+      </div>
+
+      <article class="variant active" data-panel="single" data-kind="point">
+        <p class="variant-title"><strong>pure_low_single_point</strong><span>单张 low 图输出标量 L，用于单视图全局光照分解。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>单图重建</td>
+                <td><code>recon_weight = 1.0</code></td>
+                <td><pre class="formula">L1(R ⊙ rep3(L), I)</pre></td>
+                <td>要求单张 low 图能由自身 R/L 重组回原图，提供单视图训练的核心自监督信号。</td>
+              </tr>
+              <tr>
+                <td>AnchorPoint</td>
+                <td><code>anchor_weight = 0.05</code></td>
+                <td><pre class="formula">L1(max_c(I), expand(L))</pre></td>
+                <td>用输入亮度给全局 L 定尺度，避免标量光照任意漂移，并稳定 R 的亮度补偿范围。</td>
+              </tr>
+              <tr>
+                <td>BDSP 结构保持</td>
+                <td><code>bdsp_weight = 0.05</code></td>
+                <td><pre class="formula">L1(BDSP_Face(R), BDSP_Face(I))</pre></td>
+                <td>让 R 保留输入的主要轮廓、纹理和边缘，弥补单视图模式缺少跨图一致性约束的问题。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="variant" data-panel="single" data-kind="pixel">
+        <p class="variant-title"><strong>pure_low_single_pixel</strong><span>单张 low 图输出逐像素 L，用于建模局部亮度起伏。</span></p>
+        <div class="table-wrap">
+          <table class="loss-table">
+            <thead>
+              <tr><th>损失名称</th><th>默认权重</th><th>数学公式</th><th>该部分损失函数含义</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>单图重建</td>
+                <td><code>recon_weight = 1.0</code></td>
+                <td><pre class="formula">L1(R ⊙ rep3(L), I)</pre></td>
+                <td>要求单张 low 图能由自身 R/L 重组回原图，保证逐像素光照图仍服务于图像重建。</td>
+              </tr>
+              <tr>
+                <td>AnchorPixel</td>
+                <td><code>anchor_weight = 0.05</code></td>
+                <td><pre class="formula">L1(mean_hw(max_c(I)), mean_hw(L))</pre></td>
+                <td>只锚定 L 的全图平均亮度，固定整体曝光尺度，同时允许 L 表达局部照明起伏。</td>
+              </tr>
+              <tr>
+                <td>BDSP 结构保持</td>
+                <td><code>bdsp_weight = 0.05</code></td>
+                <td><pre class="formula">L1(BDSP_Face(R), BDSP_Face(I))</pre></td>
+                <td>让 R 保留输入的主要轮廓、纹理和边缘，避免逐像素 L 把结构细节吸走。</td>
+              </tr>
+              <tr>
+                <td>Retinex smooth</td>
+                <td><code>smooth_weight = 0</code></td>
+                <td><pre class="formula">Smooth(L, R)</pre></td>
+                <td>惩罚 L 的局部高频变化，使光照图更像缓慢变化的照明场，减少纹理泄漏到 L。</td>
+              </tr>
+              <tr class="note-row">
+                <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图；<code>mean_hw(.)</code> 表示空间均值。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <footer>
+      Retinex-TDN loss explainer · 表格按当前源码实现整理
+    </footer>
+  </main>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll(".tab"));
+    const panels = Array.from(document.querySelectorAll(".loss-panel"));
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const id = tab.dataset.tab;
+        tabs.forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+        panels.forEach((panel) => panel.classList.toggle("active", panel.id === id));
+      });
+    });
+
+    document.querySelectorAll(".mode-toggle").forEach((toggle) => {
+      const group = toggle.dataset.toggleFor;
+      const buttons = Array.from(toggle.querySelectorAll("button"));
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const kind = button.dataset.variant;
+          buttons.forEach((item) => item.classList.toggle("active", item === button));
+          document.querySelectorAll(`.variant[data-panel="${group}"]`).forEach((variant) => {
+            variant.classList.toggle("active", variant.dataset.kind === kind);
+          });
+        });
+      });
+    });
+  </script>
+</body>
+</html>

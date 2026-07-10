@@ -61,8 +61,7 @@ def load_config(config_path: str) -> dict:
     return cfg
 
 
-# 各模式对应的有效 loss 字段（用于过滤多余配置）
-# 各模式对应的有效 loss 字段（用于过滤多余配置）
+# 各模式对应的有效 loss 字段（用于配置校验）
 _VALID_LOSS_FIELDS = {
     'paired_point': {
         'recon_weight_high', 'recon_weight_low',
@@ -112,7 +111,7 @@ def _build_loss_function(loss_cfg):
       pure_low_single_point, pure_low_single_pixel
 
     mode 格式: {data_mode}_{l_type}，其中 l_type 为 point 或 pixel。
-    仅透传当前模式支持的字段，多余字段被忽略并打印警告。
+    仅允许当前模式支持的字段，多余字段会报错。
     """
     cfg = dict(loss_cfg or {})
     mode = cfg.pop('mode', None)
@@ -148,12 +147,15 @@ def _build_loss_function(loss_cfg):
             + f"\n\n请参考 _VALID_LOSS_FIELDS['{mode}'] = {sorted(required)} 补全。"
         )
 
-    # 过滤无效字段（l_type 始终保留）
+    # 拒绝无效字段（l_type 始终保留）
     valid = required | {'l_type'}
     extra = set(cfg.keys()) - valid
     if extra:
-        print(f"[loss] mode='{mode}' ignoring fields: {sorted(extra)}")
-        cfg = {k: v for k, v in cfg.items() if k in valid}
+        raise ValueError(
+            f"loss.mode='{mode}' 不支持以下字段：\n"
+            + "\n".join(f"  {f}" for f in sorted(extra))
+            + f"\n\n当前模式仅支持：{sorted(required)}。"
+        )
 
     if data_mode == 'paired':
         return PairedLoss(**cfg)

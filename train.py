@@ -167,7 +167,6 @@ def main(args):
                 "recon_weight": 1,
                 "anchor_weight": 0.05,
                 "bdsp_weight": 0.05,
-                "smooth_weight": 0,
                 "self_recon_weight": 0.05
             },
             "resume": {

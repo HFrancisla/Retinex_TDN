@@ -113,7 +113,7 @@ LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr
 | `equal_r_weight` | `er` | 反射一致性 |
 | `anchor_weight` | `anchor` | 光照锚定 |
 | `bdsp_weight` | `bdsp` | BDSP 结构保持 |
-| `smooth_weight` | `sm` | 光照平滑 |
+| `smooth_weight` | `sm` | 光照平滑（仅 `_pixel` 模式） |
 | `self_recon_weight` | `sr` | 自重构约束 |
 | `reflect_weight` | `ref` | 反射约束 |
 

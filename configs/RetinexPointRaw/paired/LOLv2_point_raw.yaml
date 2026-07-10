@@ -26,7 +26,7 @@ training:
     save_best_ckpt: true
 
 loss:
-  # paired 模式: 仅支持 recon_weight_high/low, cross_recon_weight_high/low, smooth_weight, equal_r_weight
+  # paired_point 模式: 仅支持 recon_weight_high/low, cross_recon_weight_high/low, equal_r_weight
   mode: "paired_point"
   recon_weight_high: 1
   recon_weight_low: 0.3

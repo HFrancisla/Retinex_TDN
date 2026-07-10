@@ -26,7 +26,7 @@ training:
     save_best_ckpt: true
 
 loss:
-  # unpaired 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight, smooth_weight, self_recon_weight
+  # unpaired_point 模式: 仅支持 recon_weight, anchor_weight, bdsp_weight, self_recon_weight
   mode: "unpaired_point"
   recon_weight: 1
   anchor_weight: 0.05

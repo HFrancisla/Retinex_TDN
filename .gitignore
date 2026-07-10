@@ -4,3 +4,5 @@ experiments/
 *.pyc
 _compare/html/
 __pycache__
+*.zip
+_tmp/
