@@ -25,4 +25,4 @@
 ## 检查清单
 
 - [ ] `paired` / `unpaired` / `pure_low_double` → batch_size 为同数据集 `pure_low_single` 的一半
-- [ ] 修改 batch_size 时同步确认 `num_workers` 不超过 `batch_size`
+- [ ] 修改 batch_size 时同步确认 `num_workers` 不超过 `batch_size`，一般设置为2或4
