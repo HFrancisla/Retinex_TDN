@@ -39,17 +39,25 @@ def extract_loss_config(run_name: str) -> str:
 def loss_short(loss: str) -> str:
     """压缩损失配置为紧凑列标题。
 
-    "1r_0.05anchor_0.05bdsp_0.05sr_0.05ref" → "recon=1 anchor=0.05 bdsp=0.05 sr=0.05 ref=0.05"
+    "1r_0.05anchor_0.05bdsp" → "recon=1 anchor=0.05 bdsp=0.05"
+    "1rh_0.3rl_0.001crh_0.001crl_0.1er_0.1sm" → "recon_h=1 recon_l=0.3 cross_h=0.001 cross_l=0.001 equal_R=0.1 sm=0.1"
     """
     s = loss
-    s = re.sub(r"^(\d+\.?\d*)r_", r"recon=\1_", s)       # 1r_ → recon=1_  保留分隔符
+    if s and s[0].isdigit():
+        s = '_' + s
+    s = re.sub(r"_(\d+\.?\d*)crh",    r" crossH=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)crl",    r" crossL=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rh",     r" reconH=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rl",     r" reconL=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)r_",     r" recon=\1_", s)
     s = re.sub(r"_(\d+\.?\d*)anchor", r" anchor=\1", s)
     s = re.sub(r"_(\d+\.?\d*)bdsp",   r" bdsp=\1", s)
     s = re.sub(r"_(\d+\.?\d*)sr",     r" sr=\1", s)
     s = re.sub(r"_(\d+\.?\d*)ref",    r" ref=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)er",     r" equalR=\1", s)
     s = re.sub(r"_(\d+\.?\d*)sm",     r" sm=\1", s)
     s = s.replace("_", " ")
-    return s
+    return s.strip()
 
 
 def mode_label(mode: str) -> str:
@@ -254,6 +262,13 @@ td.sep-loss {{ border-left:2px solid #7a7a5a; }}
 td img {{ display:block; width:180px; height:auto; border-radius:3px; cursor:pointer; transition:transform .15s; }}
 td img:hover {{ transform:scale(2.5); z-index:20; position:relative; box-shadow:0 0 20px #000; }}
 
+/* ── Lightbox ── */
+.lightbox {{ display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(0,0,0,0.9); z-index:1000; justify-content:center; align-items:center; cursor:pointer; }}
+.lightbox.active {{ display:flex; }}
+.lightbox img {{ max-width:95vw; max-height:95vh; object-fit:contain;
+    border-radius:4px; box-shadow:0 0 40px rgba(233,69,96,0.5); }}
+
 /* ── 左侧固定列 ── */
 th.idx, td.idx {{
     position: sticky; left: 0; z-index: 2;
@@ -293,11 +308,12 @@ th.original {{ border-right:3px solid #e94560; }}
 </header>
 
 <div class="table-wrap" id="content"></div>
+<div class="lightbox" id="lightbox"></div>
 <div class="info">
-  R=反射分量 L=光照分量 R×L=重建结果 | 点击图片放大
+  R=反射分量 L=光照分量 R×L=重建结果 | PSNR(dB)仅衡量分解重建低光图与输入的相似度，越高说明重建越接近输入
   | 表头: <span style="color:#e94560">训练方式</span>
   → <span style="color:#f0c060">损失配置</span>
-  → R / L / R×L
+  → R / L / 重建R×L
 </div>
 
 <script>
@@ -310,14 +326,15 @@ let currentIdx = 0;
 
 function init() {{
     const tabs = document.getElementById('tabs');
-    for (const ds of Object.keys(DATA)) {{
+    const dsOrder = Object.keys(DATA).sort();
+    for (const ds of dsOrder) {{
         const d = document.createElement('div');
         d.className = 'tab';
         d.textContent = ds.replace('datasets/','');
         d.onclick = () => selectDS(ds);
         tabs.appendChild(d);
     }}
-    selectDS(Object.keys(DATA)[0]);
+    selectDS(dsOrder[0]);
 }}
 
 function selectDS(ds) {{
@@ -461,7 +478,7 @@ function render() {{
         let sepCls = '';
         if (col.isFirstInMode && ci > 0) sepCls = ' sep-mode';
         else if (col.isFirstInLoss && ci > 0 && !col.isFirstInMode) sepCls = ' sep-loss';
-        hdr3 += `<th${{sepCls}} style="font-size:10px;color:#aaa">R</th><th style="font-size:10px;color:#aaa">L</th><th style="font-size:10px;color:#aaa">R×L</th>`;
+        hdr3 += `<th${{sepCls}} style="font-size:10px;color:#aaa">R</th><th style="font-size:10px;color:#aaa">L</th><th style="font-size:10px;color:#aaa">重建R×L</th>`;
     }}
     hdr3 += '</tr>';
 
@@ -496,7 +513,19 @@ function render() {{
     }}
     html += '</tbody></table>';
     document.getElementById('content').innerHTML = html;
+    document.querySelectorAll('#content img').forEach(img => {{
+        img.addEventListener('click', e => {{ e.stopPropagation(); openLightbox(img.src); }});
+    }});
 }}
+
+function openLightbox(src) {{
+    const lb = document.getElementById('lightbox');
+    lb.innerHTML = `<img src="${{src}}">`;
+    lb.classList.add('active');
+}}
+document.getElementById('lightbox').addEventListener('click', function() {{
+    this.classList.remove('active');
+}});
 
 init();
 </script>
