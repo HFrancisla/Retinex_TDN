@@ -1,5 +1,5 @@
 experiment:
-  name: "pure_low_single_lolv2_pixel_trans_minus"
+  name: "pure_low_single_lolv2_pixel_classic"
   auto_name: true
 
 data:
@@ -10,10 +10,9 @@ data:
   num_workers: 0
 
 model:
-  name: "RetinexPixelTransMinus"
+  name: "RetinexPixelClassic"
   dim: 24
-  l_heads: 1
-  l_ffn_expansion: 2.66
+  l_channel: 32
   use_dp: false
   gpu_id: "0"
 
@@ -33,6 +32,7 @@ loss:
   recon_weight: 1
   anchor_weight: 0.05
   bdsp_weight: 0.05
+  smooth_weight: 0.1
 
 resume:
   checkpoint: ""

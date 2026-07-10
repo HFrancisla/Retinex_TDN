@@ -17,6 +17,7 @@ Retinex 分解模型训练入口。
 
 import os
 import sys
+import shutil
 import argparse
 import datetime
 import time
@@ -150,7 +151,9 @@ def main(args):
                 "log_interval": 1000,
                 "eval": {
                     "eval_interval": 500,
-                    "save_best_ckpt": True
+                    "save_best_ckpt": True,
+                    "keep_top_ckpt": 2,
+                    "max_save_images": 500
                 }
             },
             "loss": {
@@ -403,10 +406,20 @@ def main(args):
     save_ckpt_interval = train_cfg.get("save_ckpt_interval", 5000)
     log_interval = train_cfg.get("log_interval", 1000)
 
+    # 磁盘清理策略
+    keep_top_ckpt = eval_cfg.get("keep_top_ckpt", 2)      # 保留 top-N checkpoint 权重（0=全部保留）
+    max_save_images = eval_cfg.get("max_save_images", 500) # 每次 eval 最多保存图像数
+
+    # 追踪已保存的 checkpoint 和可视化文件夹，用于后续清理
+    saved_ckpt_files = []   # [(val_loss, global_iter, filepath), ...]
+    saved_img_folders = []  # [(val_loss, folder_path), ...]
+
     print(f"eval_interval: {eval_interval} steps")
     print(f"log_interval: {log_interval} steps")
     print(f"save_ckpt_interval: {save_ckpt_interval} steps")
     print(f"save_img_interval: {save_img_interval} steps")
+    print(f"keep_top_ckpt: {keep_top_ckpt} (0=keep all)")
+    print(f"max_save_images: {max_save_images}")
 
     # ---- 校验 interval 约束 ----
     if eval_interval <= 0:
@@ -429,6 +442,7 @@ def main(args):
     data_iter = iter(train_loader)
     accum_loss = torch.zeros(6, device=device)
     accum_count = 0
+    last_val_loss = float('inf')  # 最近一次 eval 的 val_loss，供 checkpoint 清理排名使用
     train_start = time.perf_counter()
 
     while global_iter < max_iterations:
@@ -484,7 +498,8 @@ def main(args):
             val_loss, val_recon, val_anchor, val_bdsp, val_smooth, val_self_recon, val_psnr = evaluate(
                 model=model, data_loader=val_loader, device=device,
                 lr=lr, filefold_path=file_img_path,
-                loss_function=loss_function, save_images=save_img, global_iter=global_iter)
+                loss_function=loss_function, save_images=save_img, global_iter=global_iter,
+                max_save_images=max_save_images)
 
             # TensorBoard
             train_avg = (accum_loss / accum_count).cpu().numpy()
@@ -508,6 +523,9 @@ def main(args):
             psnr_str = f" | PSNR: {val_psnr:.2f}dB" if val_psnr is not None else ""
             print(f"[{now}] [eval  step {global_iter:>6d}] val_loss: {val_loss:.4f}{psnr_str}")
 
+            # 缓存最近 val_loss，供 checkpoint 清理使用
+            last_val_loss = val_loss
+
             # 重置训练损失累积
             accum_loss.zero_()
             accum_count = 0
@@ -527,8 +545,23 @@ def main(args):
                 best_psnr_str = f" | PSNR: {val_psnr:.2f}dB" if val_psnr is not None else ""
                 print(f"Saved best model at step {global_iter} | val_loss: {val_loss:.4f}{best_psnr_str}")
 
+            # ---- 清理可视化文件夹：仅保留 top-N（按 val_loss）----
+            if save_img and keep_top_ckpt > 0:
+                img_folder = os.path.join(file_img_path, str(global_iter))
+                saved_img_folders.append((val_loss, img_folder))
+                # 超过上限时删除 val_loss 最高的（最差的）
+                if len(saved_img_folders) > keep_top_ckpt:
+                    saved_img_folders.sort(key=lambda x: x[0])  # 按 loss 升序
+                    _, worst_folder = saved_img_folders.pop()    # 移除最差
+                    if os.path.exists(worst_folder):
+                        shutil.rmtree(worst_folder)
+                        print(f"[cleanup] Removed visualization folder: {worst_folder}")
+
         # ---- 定期保存 checkpoint ----
         if global_iter % save_ckpt_interval == 0:
+            loss_str = f"{last_val_loss:.4f}" if last_val_loss != float('inf') else "na"
+            ckpt_name = f"checkpoint_{global_iter}_loss{loss_str}.pth"
+            ckpt_path = os.path.join(file_weights_path, ckpt_name)
             save_file = {
                 "model": model.module.state_dict() if use_dp else model.state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -536,7 +569,17 @@ def main(args):
                 "global_iter": global_iter,
                 "config": cfg
             }
-            torch.save(save_file, os.path.join(file_weights_path, f"checkpoint_{global_iter}.pth"))
+            torch.save(save_file, ckpt_path)
+
+            # ---- 清理旧 checkpoint：仅保留 val_loss 最低的 N 个（best_model.pth 不受影响）----
+            if keep_top_ckpt > 0:
+                saved_ckpt_files.append((last_val_loss, global_iter, ckpt_path))
+                if len(saved_ckpt_files) > keep_top_ckpt:
+                    saved_ckpt_files.sort(key=lambda x: x[0])   # 按 loss 升序
+                    _, _, old_path = saved_ckpt_files.pop()      # 移除最差
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                        print(f"[cleanup] Removed old checkpoint: {os.path.basename(old_path)}")
 
     print()  # 换行
     tb_writer.close()

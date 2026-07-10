@@ -404,7 +404,8 @@ def train_step(model, optimizer, loss_function, data, device, lr_scheduler):
 
 @torch.no_grad()
 def evaluate(model, data_loader, device, lr, filefold_path,
-             loss_function=None, loss_cfg=None, save_images=False, global_iter=0):
+             loss_function=None, loss_cfg=None, save_images=False, global_iter=0,
+             max_save_images=500):
 
     if loss_function is None:
         loss_function = _build_loss_function(loss_cfg)
@@ -427,6 +428,8 @@ def evaluate(model, data_loader, device, lr, filefold_path,
         evalfold_path = os.path.join(filefold_path, str(global_iter))
         os.makedirs(evalfold_path, exist_ok=True)
 
+    save_count = 0  # 已保存图像计数，达到 max_save_images 后停止保存
+
     data_loader = tqdm(data_loader, file=sys.stdout)
     for step, data in enumerate(data_loader):
         # --- 统一提取 low 图像并分解（所有模式一致）---
@@ -439,11 +442,12 @@ def evaluate(model, data_loader, device, lr, filefold_path,
 
         R_low, L_low = model(I_low)
 
-        if save_images:
+        if save_images and save_count < max_save_images:
             R_low_img = tensor2numpy_R(R_low)
             L_low_img = tensor2numpy_L(L_low)
             save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
             save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
+            save_count += 1
 
         # --- 损失计算（按模式分支）---
         if isinstance(loss_function, PureLowSingleLoss):
@@ -493,6 +497,10 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                 parts.append(f"{loss_names[i]}: {avg_vals[i]:.3f}")
         parts.append(f"lr: {lr:.6f}")
         data_loader.desc = f"[val step {global_iter}] " + "  ".join(parts)
+
+    if save_images and save_count >= max_save_images:
+        print(f"\n[visualization] Reached max_save_images limit ({max_save_images}), "
+              f"stopped saving. Total val samples: {step + 1}")
 
     step_count = max(step + 1, 1) if data_loader.iterable else 0
     if step_count == 0:
