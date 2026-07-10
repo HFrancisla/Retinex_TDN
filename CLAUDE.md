@@ -1,6 +1,6 @@
 ## 项目简介
 
-Retinex-TDN：基于 Retinex 理论与小波 Transformer 的低光图像增强网络。TDN（Transformer Decomposition Network）将低光图像分解为反射分量 R 和光照分量 L，利用 DWT-FSA（频域自注意力）进行多尺度小波域特征建模，最终通过 `增强图 = R ⊙ L` 重组得到正常光照图像。
+Retinex-TDN：基于 Retinex 理论与小波 Transformer 的低光图像分解网络。TDN（Transformer Decomposition Network）将低光图像分解为反射分量 R 和光照分量 L，利用 DWT-FSA（频域自注意力）进行多尺度小波域特征建模。`重建图 = R ⊙ L` 重组得到原始低光图像的重建结果（网络仅做分解，不直接输出增强图像）。
 
 ## 网络类（`model.name`）
 

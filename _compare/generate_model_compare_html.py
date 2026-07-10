@@ -294,7 +294,7 @@ th.original {{ border-right:3px solid #e94560; }}
 
 <div class="table-wrap" id="content"></div>
 <div class="info">
-  R=反射分量 L=光照分量 R×L=增强结果 | 点击图片放大
+  R=反射分量 L=光照分量 R×L=重建结果 | 点击图片放大
   | 表头: <span style="color:#e94560">训练方式</span>
   → <span style="color:#f0c060">损失配置</span>
   → R / L / R×L
