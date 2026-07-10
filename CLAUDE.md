@@ -1,88 +1,45 @@
-# CLAUDE.md
-
 ## 项目简介
 
-Retinex-TDN：基于 Retinex 理论与小波 Transformer 的低光图像分解增强网络。DecomNet 将低光图像分解为反射分量 R 和光照分量 L，使用 DWT-FSA 注意力机制进行多尺度频域特征建模。
+Retinex-TDN：基于 Retinex 理论与小波 Transformer 的低光图像增强网络。TDN（Transformer Decomposition Network）将低光图像分解为反射分量 R 和光照分量 L，利用 DWT-FSA（频域自注意力）进行多尺度小波域特征建模，最终通过 `增强图 = R ⊙ L` 重组得到正常光照图像。
 
-## 关键文件
+## 网络类（`model.name`）
 
-| 文件 | 职责 |
-|---|---|
-| `train.py` | 训练入口，支持 YAML 配置 |
-| `test.py` | 推理与跨分量重组评估 |
-| `utils.py` | 训练辅助函数 |
-| `models/network.py` | RetinexPoint + TDN backbone |
-| `models/wavelets.py` | 可微 DWT / IDWT 小波变换 |
-| `loss/decomposition_loss.py` | Retinex 分解总损失 |
-| `loss/bsdp.py` | BDSP 边缘检测算子 |
-| `data/dataset.py` | 配对/非配对/纯低光 Dataset |
-| `configs/` | YAML 配置文件（按训练模式分子目录） |
-| `scripts/metrics.py` | PSNR / SSIM / LPIPS 指标计算 |
+4 个网络类均定义在 `models/network.py`，R 分支共用同一个 `TDN` backbone（3 级 U-Net + DWT-FSA Transformer），区别仅在于 L 分支：
 
-## 网络类（model.name）
-
-配置文件中 `model.name` 可选以下三个网络类，均定义在 `models/network.py`：
-
-| 网络类 | L 分支输出 | 说明 |
+| 网络类 | L 输出 | L 分支结构 |
 |---|---|---|
-| `RetinexPointRaw` | 标量 `L [B,1,1,1]` | 默认模型。R 分支为 TDN Transformer U-Net，L 分支从多尺度特征池化后经全连接输出全局光照标量 |
-| `RetinexPixelClassic` | 逐像素 `L [B,1,H,W]` | R 分支同上，L 分支替换为轻量 CNN（3 层 Conv），与 Diff-TDN 原版一致 |
-| `RetinexPixelTrans` | 逐像素 `L [B,1,H,W]` | R 分支同上，L 分支从 encoder 中间特征出发，经两次上采样 + DWTTransformer 处理后输出逐像素光照图 |
+| `RetinexPointRaw` | 标量 `[B,1,1,1]` | 多尺度特征 cat → 2 层 depthwise Conv + BN → AdaptiveAvgPool → FC → sigmoid |
+| `RetinexPixelClassic` | 逐像素 `[B,1,H,W]` | conv0(3→C) → 3×Conv+ReLU → recon(C→1) → sigmoid |
+| `RetinexPixelTrans` | 逐像素 `[B,1,H,W]` | cat(fea_L3, fea_down1) → 1×1 reduce(8C→4C) → 2×Upsample → DWTTransformer → Conv → sigmoid |
+| `RetinexPixelTransMinus` | 逐像素 `[B,1,H,W]` | fea_down1 − fea_L3（逐像素做差）→ 2×Upsample → DWTTransformer → Conv → sigmoid |
 
-## 常用命令
+> `RetinexPixelTransMinus` 相比 `RetinexPixelTrans` 去掉了 1×1 降维卷积，改为特征做差融合。
 
-```bash
-# 训练
-python train.py --config configs/paired/lol_exp1.yaml
+## 损失函数
 
-# 推理（需先在 test.py 中修改权重路径与数据路径）
-python test.py
+`loss.mode` 格式为 `{数据模式}_{L类型}`，共 8 种组合：
 
-# 指标计算
-python -m scripts.metrics --pair <预测文件夹> <真值文件夹>
-
-# TensorBoard
-tensorboard --logdir experiments/
-```
-
-## 损失函数架构
-
-### 损失模式（8种）
-
-`loss.mode` 必须显式设置，格式为 `{data_mode}_{l_type}`：
-
-| 数据模式 | L 类型 | 说明 |
+| mode | 损失类 | 核心损失项 |
 |---|---|---|
-| `paired` | `_point` / `_pixel` | 有监督成对训练 |
-| `unpaired` | `_point` / `_pixel` | 非配对训练 |
-| `pure_low_double` | `_point` / `_pixel` | 纯低光双视图自监督 |
-| `pure_low_single` | `_point` / `_pixel` | 纯低光单视图 |
+| `paired_point` | `PairedLoss` | 自重建 + 交叉重建 + equal_R |
+| `paired_pixel` | `PairedLoss` | 同上 + Retinex smooth |
+| `unpaired_point` | `UnpairedLoss` | 重建 + anchor(全局) + BDSP + self_recon |
+| `unpaired_pixel` | `UnpairedLoss` | 同上 + Retinex smooth |
+| `pure_low_double_point` | `PureLowDoubleLoss` | 重建 + anchor + BDSP + self_recon + **reflect**(R1↔R2 一致性) |
+| `pure_low_double_pixel` | `PureLowDoubleLoss` | 同上 + Retinex smooth |
+| `pure_low_single_point` | `PureLowSingleLoss` | 重建 + anchor + BDSP |
+| `pure_low_single_pixel` | `PureLowSingleLoss` | 同上 + Retinex smooth |
 
-## 注意事项
+**关键区别：**
+- **`_point`**：L 为标量，anchor 约束 `L ≈ max(I)`，无 smooth
+- **`_pixel`**：L 为逐像素图，anchor 仅约束 `mean(L) ≈ mean(I)`，带 Retinex smooth
+- **`pure_low_double`** 独有 `reflect_weight`：约束两个增强 view 的 R 分量一致性（带 detach 防梯度泄露）
 
-- 数据目录必须严格遵循 `train/low`, `train/high`, `test/low`, `test/high` 结构
-- 修改模型结构时同步检查 `models/wavelets.py` 中的 DWT/IDWT 兼容性
-- `scripts/` 下工具通过 `python -m scripts.xxx` 调用
+## 数据集类
 
-### 光度增强配置（pure_low_double 模式）
-
-在 `data.photometric_augment` 段配置，仅训练时启用，对两个 view 独立应用：
-
-```yaml
-data:
-  photometric_augment:
-    enabled: true
-    gamma_range: [0.7, 1.5]        # gamma 校正范围
-    brightness_range: [0.6, 1.4]    # 亮度缩放范围
-```
-
-## 配置文件结构
-
-```
-configs/
-├── LOLv2_base.yaml              # 顶层基础配置
-├── paired/                      # 成对训练配置
-├── unpaired/                    # 非配对训练配置
-├── pure_low_double/             # 纯低光双视图配置
-└── pure_low_single/             # 纯低光单视图配置
-```
+| 类 | 数据要求 | 说明 |
+|---|---|---|
+| `MyDataSet` | `train/low` + `train/high` 配对 | 同步空间增强 |
+| `UnpairedDataSet` | `train/low` + `train/high`（不配对） | 各自独立增强 |
+| `PureLowDataSet` | 仅 `train/low` | 双视图自监督，可选光度增强 |
+| `PureLowSingleDataSet` | 仅 `train/low` | 单视图，仅 Retinex 分解约束 |

@@ -7,7 +7,7 @@ data:
   mode: "paired"
   crop_size: 384
   batch_size: 4
-  num_workers: 0
+  num_workers: 4
 
 model:
   name: "RetinexPointRaw"
@@ -28,7 +28,7 @@ training:
 loss:
   # paired 模式: 仅支持 recon_weight_high/low, cross_recon_weight_high/low, smooth_weight, equal_r_weight
   mode: "paired_point"
-  recon_weight_high: 1.0
+  recon_weight_high: 1
   recon_weight_low: 0.3
   cross_recon_weight_low: 0.001
   cross_recon_weight_high: 0.001

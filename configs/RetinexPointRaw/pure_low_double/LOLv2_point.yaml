@@ -7,7 +7,7 @@ data:
   mode: "pure_low_double"
   crop_size: 384
   batch_size: 4
-  num_workers: 0
+  num_workers: 4
 
   # 光度增强：让 view1/view2 经历不同的亮度扰动
   photometric_augment:

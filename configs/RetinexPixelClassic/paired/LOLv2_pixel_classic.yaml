@@ -7,7 +7,7 @@ data:
   mode: "paired"
   crop_size: 384
   batch_size: 4
-  num_workers: 0
+  num_workers: 4
 
 model:
   name: "RetinexPixelClassic"
@@ -30,7 +30,7 @@ training:
 loss:
   # paired_pixel: 自重建 + 交叉重建 + R 一致性 + Retinex smooth
   mode: "paired_pixel"
-  recon_weight_high: 1.0
+  recon_weight_high: 1
   recon_weight_low: 0.3
   cross_recon_weight_low: 0.001
   cross_recon_weight_high: 0.001
