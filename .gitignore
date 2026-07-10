@@ -3,3 +3,4 @@ datasets/
 experiments/
 *.pyc
 _compare/html/
+__pycache__

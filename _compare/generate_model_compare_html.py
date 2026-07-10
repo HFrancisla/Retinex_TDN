@@ -254,6 +254,19 @@ td.sep-loss {{ border-left:2px solid #7a7a5a; }}
 td img {{ display:block; width:180px; height:auto; border-radius:3px; cursor:pointer; transition:transform .15s; }}
 td img:hover {{ transform:scale(2.5); z-index:20; position:relative; box-shadow:0 0 20px #000; }}
 
+/* ── 左侧固定列 ── */
+th.idx, td.idx {{
+    position: sticky; left: 0; z-index: 2;
+    width: 28px; min-width: 28px;
+}}
+th.idx {{ background: #16213e; }}
+td.idx {{ background: #1a1a2e; }}
+th.original, td.original {{
+    position: sticky; left: 28px; z-index: 2;
+}}
+th.original {{ background: #16213e; }}
+td.original {{ background: #1a1a2e; }}
+
 td.original img {{ border:2px solid #e94560; }}
 td.original {{ border-right:3px solid #e94560; }}
 th.original {{ border-right:3px solid #e94560; }}
@@ -417,7 +430,7 @@ function render() {{
     }}
 
     // ── 表头行 1: Mode 超表头 ──
-    let hdr1 = '<tr><th rowspan="3">#</th><th rowspan="3" class="original">原始 Input</th>';
+    let hdr1 = '<tr><th rowspan="3" class="idx">#</th><th rowspan="3" class="original">原始 Input</th>';
     for (let ci = 0; ci < cols.length; ci++) {{
         const col = cols[ci];
         if (col.isFirstInMode) {{
@@ -463,7 +476,7 @@ function render() {{
     // 处理最后一页不足 ROWS 行的情况
     if (end - start + 1 < ROWS) {{ start = Math.max(0, end - ROWS + 1); }}
     for (let i = start; i <= end; i++) {{
-        html += `<tr><td style="font-size:11px;color:#888">${{i}}</td>`;
+        html += `<tr><td class="idx" style="font-size:11px;color:#888">${{i}}</td>`;
         // Original
         const origFile = info.test_files[i] || '';
         html += `<td class="original"><img src="${{IMG_PREFIX}}datasets/${{currentDS.replace('datasets/','')}}/test/low/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
