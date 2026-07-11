@@ -432,6 +432,7 @@ def evaluate(model, data_loader, device, lr, filefold_path,
     accu_self_recon_loss = torch.zeros(1).to(device)
     accu_psnr = 0.0
     psnr_count = 0
+    sample_count = 0
 
     if torch.cuda.is_available():
         loss_function = loss_function.to(device)
@@ -488,20 +489,28 @@ def evaluate(model, data_loader, device, lr, filefold_path,
 
             with torch.no_grad():
                 psnr_val = calculate_psnr(R_low.clamp(0, 1), I_high.clamp(0, 1))
-                accu_psnr += psnr_val
-                psnr_count += 1
+                batch_size = I_low.shape[0]
+                accu_psnr += psnr_val * batch_size
+                psnr_count += batch_size
 
-        accu_total_loss += loss
-        accu_recon_loss += loss_recon
-        accu_anchor_loss += loss_anchor
-        accu_bdsp_loss += loss_bdsp
-        accu_smooth_loss += loss_smooth
-        accu_self_recon_loss += loss_self_recon
+        batch_size = I_low.shape[0]
 
-        n = step + 1
-        avg_vals = [accu_total_loss.item() / n, accu_recon_loss.item() / n,
-                       accu_anchor_loss.item() / n, accu_bdsp_loss.item() / n,
-                       accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n]
+        # loss 函数返回 batch 内均值，因此按 batch 样本数加权，确保最后一个
+        # 不足 batch_size 的 batch 不会与完整 batch 获得相同权重。
+        accu_total_loss += loss * batch_size
+        accu_recon_loss += loss_recon * batch_size
+        accu_anchor_loss += loss_anchor * batch_size
+        accu_bdsp_loss += loss_bdsp * batch_size
+        accu_smooth_loss += loss_smooth * batch_size
+        accu_self_recon_loss += loss_self_recon * batch_size
+        sample_count += batch_size
+
+        avg_vals = [accu_total_loss.item() / sample_count,
+                    accu_recon_loss.item() / sample_count,
+                    accu_anchor_loss.item() / sample_count,
+                    accu_bdsp_loss.item() / sample_count,
+                    accu_smooth_loss.item() / sample_count,
+                    accu_self_recon_loss.item() / sample_count]
         loss_names = ["total", "recon", "anchor", "bdsp", "smooth", "self-recon"]
         parts = [f"{loss_names[0]}: {avg_vals[0]:.3f}"]
         for i in range(1, 6):
@@ -514,14 +523,13 @@ def evaluate(model, data_loader, device, lr, filefold_path,
         print(f"\n[visualization] Reached max_save_images limit ({max_save_images}), "
               f"stopped saving. Total val samples: {step + 1}")
 
-    step_count = max(step + 1, 1) if data_loader.iterable else 0
-    if step_count == 0:
+    if sample_count == 0:
         return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, None)
 
     avg_psnr = accu_psnr / psnr_count if psnr_count > 0 else None
-    return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
-            accu_anchor_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
-            accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count,
+    return (accu_total_loss.item() / sample_count, accu_recon_loss.item() / sample_count,
+            accu_anchor_loss.item() / sample_count, accu_bdsp_loss.item() / sample_count,
+            accu_smooth_loss.item() / sample_count, accu_self_recon_loss.item() / sample_count,
             avg_psnr)
 
 

@@ -441,6 +441,8 @@ def main(args):
     print(f"max_save_images: {max_save_images}")
 
     # ---- 校验 interval 约束 ----
+    if log_interval <= 0:
+        raise ValueError(f"log_interval must be > 0, got {log_interval}")
     if eval_interval <= 0:
         raise ValueError(f"eval_interval must be > 0, got {eval_interval}")
     if save_img_interval < 0:
@@ -459,8 +461,13 @@ def main(args):
     global_iter = start_iter
     epoch = 0
     data_iter = iter(train_loader)
-    accum_loss = torch.zeros(6, device=device)
-    accum_count = 0
+    # 分开统计两种训练均值：
+    # 1. log_*：仅覆盖最近一个日志区间，打印后清零；
+    # 2. eval_*：覆盖两次验证之间的训练步骤，供 TensorBoard 与 val 对齐。
+    log_accum_loss = torch.zeros(6, device=device)
+    log_accum_count = 0
+    eval_accum_loss = torch.zeros(6, device=device)
+    eval_accum_count = 0
     last_val_loss = float('inf')  # 最近一次 eval 的 val_loss，供 checkpoint 清理排名使用
     train_start = time.perf_counter()
 
@@ -475,15 +482,18 @@ def main(args):
 
         # 单步训练
         loss_vals = train_step(model, optimizer, loss_function, data, device, lr_scheduler)
-        accum_loss += torch.tensor(loss_vals, device=device)
-        accum_count += 1
+        step_loss = torch.tensor(loss_vals, device=device)
+        log_accum_loss += step_loss
+        log_accum_count += 1
+        eval_accum_loss += step_loss
+        eval_accum_count += 1
         global_iter += 1
         lr = optimizer.param_groups[0]["lr"]
 
         # 定期打印训练进度
         if global_iter % log_interval == 0:
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            avg = accum_loss / accum_count
+            avg = log_accum_loss / log_accum_count
             loss_names = ["total", "recon", "anchor", "bdsp", "smooth", "self-recon"]
             parts = [f"{loss_names[0]}: {avg[0]:.4f}"]
             for i in range(1, 6):
@@ -510,6 +520,10 @@ def main(args):
                 parts.append(f"mem: {mem_allocated:.2f}GB")
             print(f"[{now}] [iter: {global_iter:>6d}/{max_iterations}] " + " | ".join(parts))
 
+            # 下一条训练日志只统计新的 log_interval 个 step。
+            log_accum_loss.zero_()
+            log_accum_count = 0
+
         # ---- 评估 ----
         if global_iter % eval_interval == 0:
             print()  # 换行，避免 tqdm/eval 输出混乱
@@ -521,7 +535,7 @@ def main(args):
                 max_save_images=max_save_images)
 
             # TensorBoard
-            train_avg = (accum_loss / accum_count).cpu().numpy()
+            train_avg = (eval_accum_loss / eval_accum_count).cpu().numpy()
             tb_writer.add_scalar("train/total_loss", train_avg[0], global_iter)
             tb_writer.add_scalar("train/recon_loss", train_avg[1], global_iter)
             tb_writer.add_scalar("train/anchor_loss", train_avg[2], global_iter)
@@ -545,9 +559,9 @@ def main(args):
             # 缓存最近 val_loss，供 checkpoint 清理使用
             last_val_loss = val_loss
 
-            # 重置训练损失累积
-            accum_loss.zero_()
-            accum_count = 0
+            # 重置验证周期训练均值；日志区间累计器独立，不在这里清零。
+            eval_accum_loss.zero_()
+            eval_accum_count = 0
 
             # 保存最佳模型
             if save_best_ckpt and val_loss < best_valloss:
