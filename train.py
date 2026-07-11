@@ -58,6 +58,14 @@ class Tee:
         self._stream.flush()
         self._file.flush()
 
+    def isatty(self):
+        """透传终端能力，供 tqdm 判断是否适合原地刷新。"""
+        return self._stream.isatty()
+
+    def fileno(self):
+        """透传文件描述符，供 tqdm 获取动态终端宽度。"""
+        return self._stream.fileno()
+
     def close(self):
         # flush 残留内容（如 end='' 的最后一行）
         if self._line_buf:
@@ -551,10 +559,19 @@ def main(args):
             if val_psnr is not None:
                 tb_writer.add_scalar("val/psnr", val_psnr, global_iter)
 
-            # 打印评估结果（含 PSNR）
+            # 验证进度条只负责显示进度；各项指标在验证结束后统一打印一次。
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            psnr_str = f" | PSNR: {val_psnr:.2f}dB" if val_psnr is not None else ""
-            print(f"[{now}] [eval  step {global_iter:>6d}] val_loss: {val_loss:.4f}{psnr_str}")
+            val_parts = [f"val_loss: {val_loss:.4f}",
+                         f"recon: {val_recon:.4f}"]
+            for name, value in (("anchor", val_anchor),
+                                ("bdsp", val_bdsp),
+                                ("smooth", val_smooth),
+                                ("self-recon", val_self_recon)):
+                if value > 0:
+                    val_parts.append(f"{name}: {value:.4f}")
+            if val_psnr is not None:
+                val_parts.append(f"PSNR: {val_psnr:.2f}dB")
+            print(f"[{now}] [eval  step {global_iter:>6d}] " + " | ".join(val_parts))
 
             # 缓存最近 val_loss，供 checkpoint 清理使用
             last_val_loss = val_loss

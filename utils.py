@@ -443,7 +443,17 @@ def evaluate(model, data_loader, device, lr, filefold_path,
 
     save_count = 0  # 已保存图像计数，达到 max_save_images 后停止保存
 
-    data_loader = tqdm(data_loader, file=sys.stdout)
+    # 动态进度条仅在真实终端中启用。日志采集器通常无法解释 \r，
+    # 会把每次刷新展开成新内容；简短描述也可避免窄终端自动折行。
+    data_loader = tqdm(
+        data_loader,
+        desc=f"[val step {global_iter}]",
+        file=sys.stdout,
+        disable=not sys.stdout.isatty(),
+        dynamic_ncols=True,
+        mininterval=1.0,
+        leave=False,
+    )
     for step, data in enumerate(data_loader):
         # --- 统一提取 low 图像并分解（所有模式一致）---
         if isinstance(data, (tuple, list)):
@@ -504,20 +514,6 @@ def evaluate(model, data_loader, device, lr, filefold_path,
         accu_smooth_loss += loss_smooth * batch_size
         accu_self_recon_loss += loss_self_recon * batch_size
         sample_count += batch_size
-
-        avg_vals = [accu_total_loss.item() / sample_count,
-                    accu_recon_loss.item() / sample_count,
-                    accu_anchor_loss.item() / sample_count,
-                    accu_bdsp_loss.item() / sample_count,
-                    accu_smooth_loss.item() / sample_count,
-                    accu_self_recon_loss.item() / sample_count]
-        loss_names = ["total", "recon", "anchor", "bdsp", "smooth", "self-recon"]
-        parts = [f"{loss_names[0]}: {avg_vals[0]:.3f}"]
-        for i in range(1, 6):
-            if avg_vals[i] > 0:
-                parts.append(f"{loss_names[i]}: {avg_vals[i]:.3f}")
-        parts.append(f"lr: {lr:.6f}")
-        data_loader.desc = f"[val step {global_iter}] " + "  ".join(parts)
 
     if save_images and save_count >= max_save_images:
         print(f"\n[visualization] Reached max_save_images limit ({max_save_images}), "
