@@ -21,7 +21,9 @@ import shutil
 import argparse
 import datetime
 import time
+import random
 
+import numpy as np
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
@@ -192,6 +194,18 @@ def main(args):
         )
     resume_cfg = cfg.get("resume", {})
     device_str = cfg.get("device", "cuda")
+
+    # ---- 随机种子（可复现）----
+    seed = train_cfg.get("seed", 42)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    print(f"Random seed set to: {seed}")
 
     # ---- 设备设置 ----
     if "cuda" in device_str:

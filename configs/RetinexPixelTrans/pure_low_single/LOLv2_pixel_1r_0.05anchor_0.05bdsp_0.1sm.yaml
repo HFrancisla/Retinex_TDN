@@ -1,0 +1,53 @@
+# ============================================================
+# 2×2 消融实验 — 配置 A (基线)
+# ============================================================
+# 变量: recon_weight × smooth_weight (anchor/bdsp 固定 0.05)
+#
+#   A: recon=1.0  smooth=0.1  → 基线，验证当前代码下旧有参数
+#   B: recon=1.0  smooth=0.5  → 单独检验 smooth 的效应
+#   C: recon=0.3  smooth=0.1  → 单独检验 recon 的效应
+#   D: recon=0.3  smooth=0.5  → 两项联合调整（推荐优先跑）
+# ============================================================
+experiment:
+  name: "ablation_2x2_A_baseline"
+  auto_name: true
+
+data:
+  path: "datasets/LOLv2"
+  mode: "pure_low_single"
+  crop_size: 384
+  batch_size: 8
+  num_workers: 4
+
+model:
+  name: "RetinexPixelTrans"
+  dim: 24
+  l_heads: 1
+  l_ffn_expansion: 2.66
+  use_dp: false
+  gpu_id: "0"
+
+training:
+  seed: 42
+  max_iterations: 10000
+  lr: 0.0001
+  warmup_iterations: 1000
+  log_interval: 1000
+  save_ckpt_interval: 0
+  eval:
+    eval_interval: 500
+    save_img_interval: 5000
+    save_best_ckpt: true
+
+loss:
+  mode: "pure_low_single_pixel"
+  recon_weight: 1.0
+  anchor_weight: 0.05
+  bdsp_weight: 0.05
+  smooth_weight: 0.1
+
+resume:
+  checkpoint: ""
+  weights: ""
+
+device: "cuda"
