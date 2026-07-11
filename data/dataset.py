@@ -15,6 +15,19 @@ from torch.utils.data import Dataset
 
 class MyDataSet(Dataset):
     def __init__(self, images_low_path: list, images_high_path: list, transform=None):
+        if not images_low_path or not images_high_path:
+            raise ValueError("paired dataset must contain non-empty low and high image lists")
+        if len(images_low_path) != len(images_high_path):
+            raise ValueError(
+                f"paired dataset length mismatch: low={len(images_low_path)}, high={len(images_high_path)}"
+            )
+        for low_path, high_path in zip(images_low_path, images_high_path):
+            with Image.open(low_path) as low_image, Image.open(high_path) as high_image:
+                if low_image.size != high_image.size:
+                    raise ValueError(
+                        f"paired image size mismatch: {low_path}={low_image.size}, "
+                        f"{high_path}={high_image.size}"
+                    )
         self.images_low_path = images_low_path
         self.images_high_path = images_high_path
         self.transform = transform
@@ -23,10 +36,12 @@ class MyDataSet(Dataset):
         return len(self.images_low_path)
 
     def __getitem__(self, item):
-        img = Image.open(self.images_low_path[item])
+        with Image.open(self.images_low_path[item]) as source:
+            img = source.copy()
         if img.mode != 'RGB':
             raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
-        img_ref = Image.open(self.images_high_path[item])
+        with Image.open(self.images_high_path[item]) as source:
+            img_ref = source.copy()
         if img_ref.mode != 'RGB':
             raise ValueError("image: {} isn't RGB mode.".format(self.images_high_path[item]))
 
@@ -51,20 +66,32 @@ class UnpairedDataSet(Dataset):
     增强变换对两张图分别独立施加（无同步裁剪/翻转）。
     """
 
-    def __init__(self, images_low_path: list, images_high_path: list, transform=None):
+    def __init__(self, images_low_path: list, images_high_path: list, transform=None,
+                 random_pair: bool = True):
+        if not images_low_path or not images_high_path:
+            raise ValueError("unpaired dataset must contain non-empty low and high image lists")
         self.images_low_path = images_low_path
         self.images_high_path = images_high_path
         self.transform = transform
+        self.random_pair = random_pair
 
     def __len__(self):
-        return len(self.images_low_path)
+        # 以较大的域定义 epoch，使两个域都能获得充分采样机会。
+        return max(len(self.images_low_path), len(self.images_high_path))
 
     def __getitem__(self, item):
-        img = Image.open(self.images_low_path[item])
+        low_idx = item % len(self.images_low_path)
+        with Image.open(self.images_low_path[low_idx]) as source:
+            img = source.copy()
         if img.mode != 'RGB':
-            raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
-        high_idx = random.randint(0, len(self.images_high_path) - 1)
-        img_ref = Image.open(self.images_high_path[high_idx])
+            raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[low_idx]))
+        if self.random_pair:
+            high_idx = random.randint(0, len(self.images_high_path) - 1)
+        else:
+            # 验证配对固定，确保同一 checkpoint 重复验证得到相同结果。
+            high_idx = item % len(self.images_high_path)
+        with Image.open(self.images_high_path[high_idx]) as source:
+            img_ref = source.copy()
         if img_ref.mode != 'RGB':
             raise ValueError("image: {} isn't RGB mode.".format(self.images_high_path[high_idx]))
 
@@ -91,6 +118,8 @@ class PureLowDataSet(Dataset):
     """
 
     def __init__(self, images_low_path: list, transform=None, photometric_transform=None):
+        if not images_low_path:
+            raise ValueError("pure-low dataset must contain at least one image")
         self.images_low_path = images_low_path
         self.transform = transform
         self.photometric_transform = photometric_transform
@@ -99,7 +128,8 @@ class PureLowDataSet(Dataset):
         return len(self.images_low_path)
 
     def __getitem__(self, item):
-        img = Image.open(self.images_low_path[item])
+        with Image.open(self.images_low_path[item]) as source:
+            img = source.copy()
         if img.mode != 'RGB':
             raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
 
@@ -111,10 +141,9 @@ class PureLowDataSet(Dataset):
             img1 = img
             img2 = img
 
-        # 空间增强：独立随机裁剪/翻转
+        # 空间增强必须同步，才能逐像素约束两个 view 的 R/L；光度增强仍相互独立。
         if self.transform is not None:
-            view1 = self.transform(img1)
-            view2 = self.transform(img2)
+            view1, view2 = self.transform(img1, img2)
         else:
             view1 = img1
             view2 = img2
@@ -138,6 +167,8 @@ class PureLowSingleDataSet(Dataset):
     """
 
     def __init__(self, images_low_path: list, transform=None):
+        if not images_low_path:
+            raise ValueError("pure-low-single dataset must contain at least one image")
         self.images_low_path = images_low_path
         self.transform = transform
 
@@ -145,7 +176,8 @@ class PureLowSingleDataSet(Dataset):
         return len(self.images_low_path)
 
     def __getitem__(self, item):
-        img = Image.open(self.images_low_path[item])
+        with Image.open(self.images_low_path[item]) as source:
+            img = source.copy()
         if img.mode != 'RGB':
             raise ValueError("image: {} isn't RGB mode.".format(self.images_low_path[item]))
 

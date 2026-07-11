@@ -18,6 +18,17 @@ from .wavelets import DWT_2D, IDWT_2D
 import pywt
 
 
+def _pad_input_to_multiple(input_im, multiple=4):
+    """Pad 右/下边界，保证两级 PixelUnshuffle 可处理任意图像尺寸。"""
+    h, w = input_im.shape[-2:]
+    pad_h = (-h) % multiple
+    pad_w = (-w) % multiple
+    if pad_h == 0 and pad_w == 0:
+        return input_im, h, w
+    mode = 'reflect' if h > pad_h and w > pad_w else 'replicate'
+    return F.pad(input_im, (0, pad_w, 0, pad_h), mode=mode), h, w
+
+
 # ============================== RetinexPointRaw ==================================
 
 class RetinexPointRaw(nn.Module):
@@ -34,9 +45,10 @@ class RetinexPointRaw(nn.Module):
 
         self.down1 = Downsample(dim*2)
 
-        self.TDN_R = TDN(dim=24)
+        self.TDN_R = TDN(dim=dim)
 
     def forward(self, input_im):
+        input_im, original_h, original_w = _pad_input_to_multiple(input_im)
         R, fea_L1, fea_L2, fea_L3 = self.TDN_R(input_im)
         fea_down1 = self.down1(fea_L1)
         fea_L = torch.cat([fea_L3, fea_down1], 1)
@@ -50,8 +62,7 @@ class RetinexPointRaw(nn.Module):
         L_dot = self.net5_linear(feats5).reshape(b,1,1,1)
         R = torch.sigmoid(R)
         L_dot = torch.sigmoid(L_dot)
-        L = L_dot.expand_as(input_im[:, -1:, ...])
-        return R, L
+        return R[:, :, :original_h, :original_w], L_dot
 
 
 # ============================== LayerNorm ==================================
@@ -416,12 +427,13 @@ class RetinexPixelClassic(nn.Module):
         self.recon = nn.Conv2d(l_channel, 1, 1)
 
     def forward(self, input_im):
+        input_im, original_h, original_w = _pad_input_to_multiple(input_im)
         R, *_ = self.TDN_R(input_im)
         R = torch.sigmoid(R)
         feats = self.conv0(input_im)
         feats = self.convs(feats)
         L = torch.sigmoid(self.recon(feats))   # [B, 1, H, W]
-        return R, L
+        return R[:, :, :original_h, :original_w], L[:, :, :original_h, :original_w]
 
 
 # ========================== RetinexPixelTrans =============================
@@ -461,6 +473,7 @@ class RetinexPixelTrans(nn.Module):
         self.l_output = nn.Conv2d(dim, 1, kernel_size=3, stride=1, padding=1, bias=bias)
 
     def forward(self, input_im):
+        input_im, original_h, original_w = _pad_input_to_multiple(input_im)
         R, fea_L1, fea_L2, fea_L3 = self.TDN_R(input_im)
         
         # L 分支
@@ -474,7 +487,7 @@ class RetinexPixelTrans(nn.Module):
         L = torch.sigmoid(self.l_output(l_feats))  # B, 1, H, W
         
         R = torch.sigmoid(R)
-        return R, L
+        return R[:, :, :original_h, :original_w], L[:, :, :original_h, :original_w]
 
 # ========================== RetinexPixelTransMinus ========================
 class RetinexPixelTransMinus(nn.Module):
@@ -509,6 +522,7 @@ class RetinexPixelTransMinus(nn.Module):
         self.l_output = nn.Conv2d(dim, 1, kernel_size=3, stride=1, padding=1, bias=bias)
 
     def forward(self, input_im):
+        input_im, original_h, original_w = _pad_input_to_multiple(input_im)
         R, fea_L1, fea_L2, fea_L3 = self.TDN_R(input_im)
 
         # L 分支：做差
@@ -521,8 +535,6 @@ class RetinexPixelTransMinus(nn.Module):
         L = torch.sigmoid(self.l_output(l_feats))  # B, 1, H, W
 
         R = torch.sigmoid(R)
-        return R, L
-
-
+        return R[:, :, :original_h, :original_w], L[:, :, :original_h, :original_w]
 
 

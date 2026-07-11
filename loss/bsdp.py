@@ -30,8 +30,10 @@ def unnormalize(tensor, mean, std, inplace=False):
 
 def BDSP_Face(img_1):
     """对输入张量计算 BDSP 边缘响应，返回归一化边缘图。"""
-    img_1 = unnormalize(img_1, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]) * 255
-    img = torch.log(img_1.clamp_min(0.0) + 1)
+    # 训练输入来自 ToTensor，值域已经是 [0, 1]，不再重复反归一化。
+    rgb = img_1.clamp(0.0, 1.0)
+    gray = 0.299 * rgb[:, 0:1] + 0.587 * rgb[:, 1:2] + 0.114 * rgb[:, 2:3]
+    img = torch.log1p(gray * 255.0)
     (a, b) = (img.shape[2], img.shape[3])
     in_one_dim = 1
     beta = 0.8
@@ -40,16 +42,17 @@ def BDSP_Face(img_1):
                              (in_one_dim, in_one_dim, in_one_dim, in_one_dim),
                              "replicate")
 
-    temp1 = img1[:, 1, 0:a, 0:b]
-    temp2 = img1[:, 1, 0:a, 1:b+1]
-    temp3 = img1[:, 1, 1:a+1, 0:b]
-    temp4 = img1[:, 1, 1:a+1, 1:b+1]
+    temp1 = img1[:, 0, 0:a, 0:b]
+    temp2 = img1[:, 0, 0:a, 1:b+1]
+    temp3 = img1[:, 0, 1:a+1, 0:b]
+    temp4 = img1[:, 0, 1:a+1, 1:b+1]
 
     delete1 = temp1 - temp4
     delete2 = temp2 - temp3
 
     result = 2 * (beta - 0.5) * (delete1.abs() + delete2.abs()) + (delete1 + delete2)
     result = torch.atan(4 * result)
-    denom = result.abs().max().clamp_min(1e-6)
+    # 每个样本独立归一化，避免 loss 随 batch 组成和 batch size 改变。
+    denom = result.abs().amax(dim=(1, 2), keepdim=True).clamp_min(1e-6)
     result = result / denom
     return result

@@ -1,5 +1,5 @@
 # ============================================================
-# 2×2 消融实验 — 配置 C (弱重建)
+# 2×2 消融实验 — 配置 B (强平滑)
 # ============================================================
 # 变量: recon_weight × smooth_weight (anchor/bdsp 固定 0.05)
 #
@@ -9,7 +9,7 @@
 #   D: recon=0.3  smooth=0.5  → 两项联合调整（推荐优先跑）
 # ============================================================
 experiment:
-  name: "ablation_2x2_C_weak_recon"
+  name: "LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5sm"
   auto_name: true
 
 data:
@@ -36,16 +36,17 @@ training:
   log_interval: 200
   save_ckpt_interval: 0
   eval:
-    eval_interval: 2000
+    eval_interval: 500
     save_img_interval: 10000
     save_best_ckpt: true
 
 loss:
   mode: "pure_low_single_pixel"
-  recon_weight: 0.3
+  recon_weight: 1.0
   anchor_weight: 0.05
+  anchor_version: "v2"
   bdsp_weight: 0.05
-  smooth_weight: 0.1
+  smooth_weight: 0.5
 
 resume:
   checkpoint: ""

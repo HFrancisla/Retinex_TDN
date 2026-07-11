@@ -9,9 +9,6 @@ utils.py
 
 import os
 import sys
-import json
-import pickle
-import random
 
 import torch
 from tqdm import tqdm
@@ -32,10 +29,15 @@ def calculate_psnr(pred, target, max_val=1.0):
     Returns:
         PSNR 值 (dB)
     """
-    mse = torch.mean((pred - target) ** 2).item()
-    if mse == 0:
-        return float('inf')
-    return 10.0 * torch.log10(torch.tensor(max_val ** 2 / mse)).item()
+    if pred.shape != target.shape:
+        raise ValueError(f"PSNR shape mismatch: pred={pred.shape}, target={target.shape}")
+    mse = (pred - target).square().flatten(1).mean(dim=1)
+    psnr = torch.where(
+        mse == 0,
+        torch.full_like(mse, float('inf')),
+        10.0 * torch.log10((max_val ** 2) / mse),
+    )
+    return psnr.mean().item()
 
 
 
@@ -52,7 +54,8 @@ def load_config(config_path: str) -> dict:
     """
     import yaml
 
-    assert os.path.exists(config_path), f"Config file: '{config_path}' does not exist."
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"config file does not exist: {config_path}")
 
     with open(config_path, 'r', encoding='utf-8') as f:
         cfg = yaml.safe_load(f)
@@ -75,26 +78,26 @@ _VALID_LOSS_FIELDS = {
     },
     'unpaired_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'self_recon_weight',
+        'self_recon_weight', 'anchor_version',
     },
     'unpaired_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'self_recon_weight',
+        'smooth_weight', 'self_recon_weight', 'anchor_version',
     },
     'pure_low_double_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'self_recon_weight', 'reflect_weight',
+        'self_recon_weight', 'reflect_weight', 'anchor_version',
     },
     'pure_low_double_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'self_recon_weight', 'reflect_weight',
+        'smooth_weight', 'self_recon_weight', 'reflect_weight', 'anchor_version',
     },
     'pure_low_single_point': {
-        'recon_weight', 'anchor_weight', 'bdsp_weight',
+        'recon_weight', 'anchor_weight', 'bdsp_weight', 'anchor_version',
     },
     'pure_low_single_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight',
+        'smooth_weight', 'anchor_version',
     },
 }
 
@@ -111,6 +114,7 @@ def _build_loss_function(loss_cfg):
       pure_low_single_point, pure_low_single_pixel
 
     mode 格式: {data_mode}_{l_type}，其中 l_type 为 point 或 pixel。
+    含 anchor 的模式必须显式指定 anchor_version: v1 或 v2。
     仅允许当前模式支持的字段，多余字段会报错。
     """
     cfg = dict(loss_cfg or {})
@@ -170,10 +174,12 @@ def _build_loss_function(loss_cfg):
 
 
 def read_data(root: str, mode: str):
-    assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
+    if not os.path.isdir(root):
+        raise FileNotFoundError(f"dataset root does not exist: {root}")
 
     train_root = os.path.join(root, "train")
-    assert os.path.exists(train_root), "train root: {} does not exist.".format(train_root)
+    if not os.path.isdir(train_root):
+        raise FileNotFoundError(f"train root does not exist: {train_root}")
 
     val_root = os.path.join(root, "val")
     if not os.path.exists(val_root):
@@ -191,40 +197,68 @@ def read_data(root: str, mode: str):
     val_images_low_path = []
     val_images_high_path = []
 
-    supported = [".jpg", ".JPG", ".png", ".PNG"]
+    supported = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
     train_high_root = os.path.join(train_root, "high")
     train_low_root = os.path.join(train_root, "low")
 
     val_high_root = os.path.join(val_root, "high")
     val_low_root = os.path.join(val_root, "low")
 
-    train_low_path = sorted(
-        [os.path.join(train_low_root, i) for i in os.listdir(train_low_root)
-         if os.path.splitext(i)[-1] in supported]
-    )
-    train_high_path = sorted(
-        [os.path.join(train_high_root, i) for i in os.listdir(train_high_root)
-         if os.path.splitext(i)[-1] in supported]
-    )
+    def _images(folder):
+        if not os.path.isdir(folder):
+            raise FileNotFoundError(f"image directory does not exist: {folder}")
+        return sorted(
+            os.path.join(folder, name) for name in os.listdir(folder)
+            if os.path.splitext(name)[1].lower() in supported
+        )
 
-    val_low_path = sorted(
-        [os.path.join(val_low_root, i) for i in os.listdir(val_low_root)
-         if os.path.splitext(i)[-1] in supported]
-    )
-    val_high_path = sorted(
-        [os.path.join(val_high_root, i) for i in os.listdir(val_high_root)
-         if os.path.splitext(i)[-1] in supported]
-    )
+    train_low_path = _images(train_low_root)
+    train_high_path = _images(train_high_root)
+    val_low_path = _images(val_low_root)
+    val_high_path = _images(val_high_root)
 
     if mode == "paired":
-        assert len(train_low_path) == len(train_high_path), "The length of train dataset does not match. low:{}, high:{}".format(len(train_low_path), len(train_high_path))
-        assert len(val_low_path) == len(val_high_path), "The length of val dataset does not match. low:{}, high:{}".format(len(val_low_path), len(val_high_path))
+        def _pair_by_stem(low_paths, high_paths, split):
+            def _index(paths, domain):
+                result = {}
+                for path in paths:
+                    stem = os.path.splitext(os.path.basename(path))[0]
+                    if stem in result:
+                        raise ValueError(f"duplicate {domain} image stem '{stem}' in {split}")
+                    result[stem] = path
+                return result
+
+            low_by_stem = _index(low_paths, 'low')
+            high_by_stem = _index(high_paths, 'high')
+            if low_by_stem.keys() != high_by_stem.keys():
+                missing_high = sorted(low_by_stem.keys() - high_by_stem.keys())
+                missing_low = sorted(high_by_stem.keys() - low_by_stem.keys())
+                raise ValueError(
+                    f"paired filename mismatch in {split}: "
+                    f"missing high={missing_high[:10]}, missing low={missing_low[:10]}"
+                )
+            stems = sorted(low_by_stem)
+            return ([low_by_stem[s] for s in stems], [high_by_stem[s] for s in stems])
+
+        train_low_path, train_high_path = _pair_by_stem(train_low_path, train_high_path, 'train')
+        val_low_path, val_high_path = _pair_by_stem(val_low_path, val_high_path, 'val')
         print("image pair check finish")
     else:
         if mode in ("pure_low_single", "pure_low_double"):
             print("pure_low mode: low-only training, train({}), val({})".format(len(train_low_path), len(val_low_path)))
         else:
             print("unpaired mode: low({}) and high({}) loaded independently".format(len(train_low_path), len(train_high_path)))
+    if not train_low_path or not val_low_path:
+        raise ValueError(
+            f"dataset must contain low images in both train and validation: "
+            f"train={len(train_low_path)}, val={len(val_low_path)}"
+        )
+    if mode in ('paired', 'unpaired') and (not train_high_path or not val_high_path):
+        raise ValueError(
+            f"mode={mode} requires high images in both train and validation: "
+            f"train={len(train_high_path)}, val={len(val_high_path)}"
+        )
+
     train_images_low_path = list(train_low_path)
     train_images_high_path = list(train_high_path)
     val_images_low_path = list(val_low_path)
@@ -246,10 +280,12 @@ def read_data(root: str, mode: str):
 
 def read_pure_low_data(root: str):
     """读取 pure_low 数据集，仅使用 low 文件夹。"""
-    assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
+    if not os.path.isdir(root):
+        raise FileNotFoundError(f"dataset root does not exist: {root}")
 
     train_root = os.path.join(root, "train")
-    assert os.path.exists(train_root), "train root: {} does not exist.".format(train_root)
+    if not os.path.isdir(train_root):
+        raise FileNotFoundError(f"train root does not exist: {train_root}")
 
     val_root = os.path.join(root, "val")
     if not os.path.exists(val_root):
@@ -262,7 +298,7 @@ def read_pure_low_data(root: str):
                 f"Neither 'val' nor 'test' directory exists in {root}."
             )
 
-    supported = [".jpg", ".JPG", ".png", ".PNG"]
+    supported = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
     # 兼容性：如果不存在 low/high 子目录，直接使用 images 目录
     train_low_root = os.path.join(train_root, "low")
@@ -289,147 +325,89 @@ def read_pure_low_data(root: str):
 
     train_low_path = sorted(
         [os.path.join(train_low_root, i) for i in os.listdir(train_low_root)
-         if os.path.splitext(i)[-1] in supported]
+         if os.path.splitext(i)[-1].lower() in supported]
     )
     val_low_path = sorted(
         [os.path.join(val_low_root, i) for i in os.listdir(val_low_root)
-         if os.path.splitext(i)[-1] in supported]
+         if os.path.splitext(i)[-1].lower() in supported]
     )
 
+    if not train_low_path or not val_low_path:
+        raise ValueError(
+            f"pure-low dataset must contain images in both train and validation: "
+            f"train={len(train_low_path)}, val={len(val_low_path)}"
+        )
     print("pure_low loader: train({}), val({})".format(len(train_low_path), len(val_low_path)))
     return list(train_low_path), list(val_low_path)
+def _forward_loss(model, loss_function, data, device):
+    """统一四种数据模式的前向和损失调用。"""
+    non_blocking = device.type == 'cuda'
+    if isinstance(loss_function, PureLowSingleLoss):
+        I_low = data.to(device, non_blocking=non_blocking)
+        R_low, L_low = model(I_low)
+        return loss_function(R_low, L_low, I_low), I_low, None, R_low, L_low
+
+    I_low, I_high = data
+    I_low = I_low.to(device, non_blocking=non_blocking)
+    I_high = I_high.to(device, non_blocking=non_blocking)
+    R_low, L_low = model(I_low)
+    R_high, L_high = model(I_high)
+
+    if loss_function.self_recon_weight > 0:
+        _, L_R_low = model(R_low)
+        _, L_R_high = model(R_high)
+    else:
+        L_R_low = None
+        L_R_high = None
+
+    output = loss_function(
+        R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high
+    )
+    return output, I_low, I_high, R_low, L_low
+
+
 def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
-    model.train()
-    loss_function = _build_loss_function(loss_cfg)
-
-    if torch.cuda.is_available():
-        loss_function = loss_function.to(device)
-
-    accu_total_loss = torch.zeros(1).to(device)
-    accu_recon_loss = torch.zeros(1).to(device)
-    accu_anchor_loss = torch.zeros(1).to(device)
-    accu_bdsp_loss = torch.zeros(1).to(device)
-    accu_smooth_loss = torch.zeros(1).to(device)
-    accu_self_recon_loss = torch.zeros(1).to(device)
-    accu_psnr = 0.0
-    psnr_count = 0
-
-    optimizer.zero_grad()
-
-    data_loader = tqdm(data_loader, file=sys.stdout)
-    lr = optimizer.param_groups[0]["lr"]
-    for step, data in enumerate(data_loader):
-        if isinstance(loss_function, PureLowSingleLoss):
-            I_low = data
-            if torch.cuda.is_available():
-                I_low = I_low.to(device)
-
-            R_low, L_low = model(I_low)
-
-            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-                loss_function(R_low, L_low, I_low)
-        else:
-            I_low, I_high = data
-
-            if torch.cuda.is_available():
-                I_low = I_low.to(device)
-                I_high = I_high.to(device)
-
-            R_low, L_low = model(I_low)
-            R_high, L_high = model(I_high)
-
-            # Skip extra forward pass when self_recon_weight == 0
-            if loss_function.self_recon_weight > 0:
-                _, L_R_low = model(R_low)
-                _, L_R_high = model(R_high)
-            else:
-                L_R_low = None
-                L_R_high = None
-
-            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-                loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
-
-        loss.backward()
-
-        accu_total_loss += loss.detach()
-        accu_recon_loss += loss_recon.detach()
-        accu_anchor_loss += loss_anchor.detach()
-        accu_bdsp_loss += loss_bdsp.detach()
-        accu_smooth_loss += loss_smooth.detach()
-        accu_self_recon_loss += loss_self_recon.detach()
-
-        lr = optimizer.param_groups[0]["lr"]
-
-        n = step + 1
-        data_loader.desc = (
-            "[train epoch {}] total: {:.3f}  recon: {:.3f}  anchor: {:.3f}  "
-            "bdsp: {:.3f}  smooth: {:.3f}  self-recon: {:.3f}  lr: {:.6f}"
-        ).format(
-            epoch,
-            accu_total_loss.item() / n, accu_recon_loss.item() / n,
-            accu_anchor_loss.item() / n, accu_bdsp_loss.item() / n,
-            accu_smooth_loss.item() / n, accu_self_recon_loss.item() / n, lr
-        )
-
-        if not torch.isfinite(loss):
-            print('WARNING: non-finite loss, ending training ', loss)
-            sys.exit(1)
-
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
-
-    step_count = max(step + 1, 1) if data_loader.iterable else 0
-    if step_count == 0:
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, lr)
-
-    return (accu_total_loss.item() / step_count, accu_recon_loss.item() / step_count,
-            accu_anchor_loss.item() / step_count, accu_bdsp_loss.item() / step_count,
-            accu_smooth_loss.item() / step_count, accu_self_recon_loss.item() / step_count, lr)
+    """兼容旧调用的单 epoch 训练；统计按样本数加权。"""
+    loss_function = _build_loss_function(loss_cfg).to(device)
+    totals = {}
+    sample_count = 0
+    for data in tqdm(data_loader, file=sys.stdout, desc=f'[train epoch {epoch}]'):
+        metrics = train_step(model, optimizer, loss_function, data, device, lr_scheduler)
+        batch_size = int(metrics.pop('_batch_size'))
+        for key, value in metrics.items():
+            totals[key] = totals.get(key, 0.0) + value * batch_size
+        sample_count += batch_size
+    averages = {key: value / sample_count for key, value in totals.items()} if sample_count else {}
+    averages['lr'] = optimizer.param_groups[0]['lr']
+    return averages
 
 
 def train_step(model, optimizer, loss_function, data, device, lr_scheduler):
-    """单步训练：前向 + 反向 + 更新，返回各项损失。"""
+    """单步训练：在参数更新前拦截非有限 loss/gradient。"""
     model.train()
-
-    if isinstance(loss_function, PureLowSingleLoss):
-        I_low = data
-        if torch.cuda.is_available():
-            I_low = I_low.to(device)
-
-        R_low, L_low = model(I_low)
-        loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-            loss_function(R_low, L_low, I_low)
-    else:
-        I_low, I_high = data
-        if torch.cuda.is_available():
-            I_low = I_low.to(device)
-            I_high = I_high.to(device)
-
-        R_low, L_low = model(I_low)
-        R_high, L_high = model(I_high)
-
-        if loss_function.self_recon_weight > 0:
-            _, L_R_low = model(R_low)
-            _, L_R_high = model(R_high)
-        else:
-            L_R_low = None
-            L_R_high = None
-
-        loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-            loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
-
-    loss.backward()
-    optimizer.step()
-    lr_scheduler.step()
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
+    output, I_low, _, _, _ = _forward_loss(model, loss_function, data, device)
+    loss = output['total_loss']
 
     if not torch.isfinite(loss):
-        print('WARNING: non-finite loss, ending training ', loss)
-        sys.exit(1)
+        raise FloatingPointError(f'non-finite loss before optimizer step: {loss.detach().item()}')
+    loss.backward()
 
-    return (loss.item(), loss_recon.item(), loss_anchor.item(),
-            loss_bdsp.item(), loss_smooth.item(), loss_self_recon.item())
+    bad_gradient = next(
+        (name for name, param in model.named_parameters()
+         if param.grad is not None and not torch.isfinite(param.grad).all()),
+        None,
+    )
+    if bad_gradient is not None:
+        optimizer.zero_grad(set_to_none=True)
+        raise FloatingPointError(f'non-finite gradient before optimizer step: {bad_gradient}')
+
+    optimizer.step()
+    lr_scheduler.step()
+
+    metrics = {key: value.detach().item() for key, value in output.items()}
+    metrics['_batch_size'] = I_low.shape[0]
+    return metrics
 
 
 @torch.no_grad()
@@ -442,18 +420,12 @@ def evaluate(model, data_loader, device, lr, filefold_path,
 
     model.eval()
 
-    accu_total_loss = torch.zeros(1).to(device)
-    accu_recon_loss = torch.zeros(1).to(device)
-    accu_anchor_loss = torch.zeros(1).to(device)
-    accu_bdsp_loss = torch.zeros(1).to(device)
-    accu_smooth_loss = torch.zeros(1).to(device)
-    accu_self_recon_loss = torch.zeros(1).to(device)
+    metric_sums = {}
     accu_psnr = 0.0
     psnr_count = 0
     sample_count = 0
 
-    if torch.cuda.is_available():
-        loss_function = loss_function.to(device)
+    loss_function = loss_function.to(device)
 
     if save_images:
         evalfold_path = os.path.join(filefold_path, str(global_iter))
@@ -474,88 +446,62 @@ def evaluate(model, data_loader, device, lr, filefold_path,
     )
     with torch.no_grad():
         for step, data in enumerate(data_loader):
-            # --- 统一提取 low 图像并分解（所有模式一致）---
-            if isinstance(data, (tuple, list)):
-                I_low = data[0]
-            else:
-                I_low = data
-            if torch.cuda.is_available():
-                I_low = I_low.to(device)
-
-            R_low, L_low = model(I_low)
+            output, I_low, I_high, R_low, L_low = _forward_loss(
+                model, loss_function, data, device
+            )
 
             if save_images and save_count < max_save_images:
-                R_low_img = tensor2numpy_R(R_low)
-                L_low_img = tensor2numpy_L(L_low)
-                save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
-                save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
-                save_count += 1
+                remaining = max_save_images - save_count
+                for batch_index in range(min(I_low.shape[0], remaining)):
+                    image_index = sample_count + batch_index
+                    illumination = L_low[batch_index]
+                    if illumination.shape[-2:] != R_low.shape[-2:]:
+                        illumination = illumination.expand(
+                            1, R_low.shape[-2], R_low.shape[-1]
+                        )
+                    save_pic(tensor2numpy_R(R_low[batch_index]), evalfold_path,
+                             f"{image_index}_R_low")
+                    save_pic(tensor2numpy_L(illumination), evalfold_path,
+                             f"{image_index}_L_low")
+                    save_count += 1
 
-            # --- 损失计算（按模式分支）---
-            if isinstance(loss_function, PureLowSingleLoss):
-                loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-                    loss_function(R_low, L_low, I_low)
-            else:
-                if isinstance(data, (tuple, list)):
-                    I_high = data[1]
-                else:
-                    I_high = data
-                if torch.cuda.is_available():
-                    I_high = I_high.to(device)
-
-                R_high, L_high = model(I_high)
-
-                # Skip extra forward pass when self_recon_weight == 0
-                if loss_function.self_recon_weight > 0:
-                    _, L_R_low = model(R_low)
-                    _, L_R_high = model(R_high)
-                else:
-                    L_R_low = None
-                    L_R_high = None
-
-                loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-                    loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
-
-                # PSNR 仅在 paired 模式下有意义（R_low 与配对 GT I_high 比较）。
-                # unpaired / pure_low_double 的 I_high 是随机采样或增强视图，比较结果不可信。
-                if isinstance(loss_function, PairedLoss):
-                    psnr_val = calculate_psnr(R_low.clamp(0, 1), I_high.clamp(0, 1))
-                    batch_size = I_low.shape[0]
-                    accu_psnr += psnr_val * batch_size
-                    psnr_count += batch_size
+            # PSNR 仅作为 paired 模式下 R_low 与配对 high 的代理指标。
+            if isinstance(loss_function, PairedLoss):
+                for batch_index in range(I_low.shape[0]):
+                    psnr_val = calculate_psnr(
+                        R_low[batch_index:batch_index + 1].clamp(0, 1),
+                        I_high[batch_index:batch_index + 1].clamp(0, 1),
+                    )
+                    accu_psnr += psnr_val
+                    psnr_count += 1
 
             batch_size = I_low.shape[0]
 
             # loss 函数返回 batch 内均值，因此按 batch 样本数加权，确保最后一个
             # 不足 batch_size 的 batch 不会与完整 batch 获得相同权重。
-            accu_total_loss += loss * batch_size
-            accu_recon_loss += loss_recon * batch_size
-            accu_anchor_loss += loss_anchor * batch_size
-            accu_bdsp_loss += loss_bdsp * batch_size
-            accu_smooth_loss += loss_smooth * batch_size
-            accu_self_recon_loss += loss_self_recon * batch_size
+            for key, value in output.items():
+                metric_sums[key] = metric_sums.get(key, 0.0) + value.detach().item() * batch_size
             sample_count += batch_size
 
     if save_images and save_count >= max_save_images:
         print(f"\n[visualization] Reached max_save_images limit ({max_save_images}), "
-              f"stopped saving. Total val samples: {step + 1}")
+              f"stopped saving. Total val samples: {sample_count}")
 
     if sample_count == 0:
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, None)
+        return ({}, None)
 
     avg_psnr = accu_psnr / psnr_count if psnr_count > 0 else None
-    return (accu_total_loss.item() / sample_count, accu_recon_loss.item() / sample_count,
-            accu_anchor_loss.item() / sample_count, accu_bdsp_loss.item() / sample_count,
-            accu_smooth_loss.item() / sample_count, accu_self_recon_loss.item() / sample_count,
-            avg_psnr)
+    averages = {key: value / sample_count for key, value in metric_sums.items()}
+    return averages, avg_psnr
 
 
 def create_lr_scheduler(optimizer,
                         max_iterations: int,
                         warmup_iterations: int = 0,
                         warmup_factor: float = 1e-3):
-    """基于 step 的学习率调度器（余弦衰减 + 线性 warmup）。"""
-    assert max_iterations > 0
+    """基于 step 的学习率调度器（0.9 次多项式衰减 + 线性 warmup）。"""
+    if max_iterations <= 0:
+        raise ValueError(f'max_iterations must be > 0, got {max_iterations}')
     total_steps = max(max_iterations - warmup_iterations, 1)
 
     def f(x):
@@ -577,7 +523,8 @@ def save_pic(outputpic, path, index: str):
     outputpic = normalize_minmax(outputpic)
     outputpic = outputpic[:, :, ::-1]
     save_path = os.path.join(path, index + ".png")
-    cv2.imwrite(save_path, outputpic)
+    if not cv2.imwrite(save_path, outputpic):
+        raise OSError(f"failed to save image: {save_path}")
 
 
 def normalize_minmax(img, target_min=0, target_max=255):
@@ -586,14 +533,25 @@ def normalize_minmax(img, target_min=0, target_max=255):
 
 
 def tensor2numpy_R(R_tensor):
-    R = R_tensor.squeeze(0).cpu().detach().numpy()
+    if R_tensor.ndim == 4:
+        if R_tensor.shape[0] != 1:
+            raise ValueError(f"tensor2numpy_R expects one image, got {R_tensor.shape}")
+        R_tensor = R_tensor[0]
+    if R_tensor.ndim != 3 or R_tensor.shape[0] != 3:
+        raise ValueError(f"tensor2numpy_R expects [3,H,W], got {R_tensor.shape}")
+    R = R_tensor.cpu().detach().numpy()
     R = np.transpose(R, [1, 2, 0])
     return R
 
 
 def tensor2numpy_L(L_tensor):
-    L = L_tensor.squeeze(0)
-    L_3 = torch.cat([L, L, L], dim=0)
+    if L_tensor.ndim == 4:
+        if L_tensor.shape[0] != 1:
+            raise ValueError(f"tensor2numpy_L expects one image, got {L_tensor.shape}")
+        L_tensor = L_tensor[0]
+    if L_tensor.ndim != 3 or L_tensor.shape[0] != 1:
+        raise ValueError(f"tensor2numpy_L expects [1,H,W], got {L_tensor.shape}")
+    L_3 = L_tensor.repeat(3, 1, 1)
     L_3 = L_3.cpu().detach().numpy()
     L_3 = np.transpose(L_3, [1, 2, 0])
     return L_3

@@ -3,7 +3,7 @@ import torch
 from loss.decomposition_loss import gradient, gradient_no_abs
 
 
-def check_shapes_and_stability():
+def test_shapes_and_stability():
     cases = [
         ("sobel", 1, 8, 8),
         ("sobel", 3, 7, 9),
@@ -37,7 +37,7 @@ def check_shapes_and_stability():
         assert (gy_noabs < 0).any(), "signed gradient should include negatives"
 
 
-def check_constant_image_gradient_normalization():
+def test_constant_image_gradient_normalization():
     x = torch.full((1, 3, 10, 12), 0.5)
     gx = gradient(x, "x", kernel="sobel")
     gy = gradient(x, "y", kernel="robert")
@@ -53,6 +53,6 @@ def check_constant_image_gradient_normalization():
 
 
 if __name__ == "__main__":
-    check_shapes_and_stability()
-    check_constant_image_gradient_normalization()
+    test_shapes_and_stability()
+    test_constant_image_gradient_normalization()
     print("gradient padding tests passed")

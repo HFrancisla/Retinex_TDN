@@ -112,6 +112,7 @@ LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr
 | `cross_recon_weight_low` | `crl` | 交叉重建（低光） |
 | `equal_r_weight` | `er` | 反射一致性 |
 | `anchor_weight` | `anchor` | 光照锚定 |
+| `anchor_version` | `v1` / `v2` | Anchor 定义版本；与 anchor 合并为 `0.05anchorv1/v2` |
 | `bdsp_weight` | `bdsp` | BDSP 结构保持 |
 | `smooth_weight` | `sm` | 光照平滑（仅 `_pixel` 模式） |
 | `self_recon_weight` | `sr` | 自重构约束 |
@@ -150,7 +151,7 @@ python -m scripts.eval
 **RetinexPoint** 接收低光图像，输出：
 
 - **R**：反射分量（Reflectance），经 sigmoid 约束至 [0, 1]
-- **L**：光照标量（Illumination），经 sigmoid 约束至 [0, 1]，广播至与输入同尺寸
+- **L**：光照标量（Illumination），形状 `[B,1,1,1]`，经 sigmoid 约束至 [0, 1]；重建时通过广播与 R 相乘
 
 核心组件：
 

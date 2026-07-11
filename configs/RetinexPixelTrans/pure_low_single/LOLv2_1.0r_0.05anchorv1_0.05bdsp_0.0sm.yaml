@@ -1,6 +1,6 @@
-# RetinexPointRaw — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
+# RetinexPixelTrans — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "LOLv2_1.0r_0.05anchor_0.05bdsp"
+  name: "LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0sm"
   auto_name: true
 
 data:
@@ -12,7 +12,10 @@ data:
   num_workers: 4
 
 model:
-  name: "RetinexPointRaw"
+  name: "RetinexPixelTrans"
+  dim: 24
+  l_heads: 1
+  l_ffn_expansion: 2.66
   use_dp: false
   gpu_id: "0"
 
@@ -24,15 +27,17 @@ training:
   log_interval: 200
   save_ckpt_interval: 0
   eval:
-    eval_interval: 2000
+    eval_interval: 500
     save_img_interval: 10000
     save_best_ckpt: true
 
 loss:
-  mode: "pure_low_single_point"
+  mode: "pure_low_single_pixel"
   recon_weight: 1.0
   anchor_weight: 0.05
+  anchor_version: "v1"
   bdsp_weight: 0.05
+  smooth_weight: 0.0
 
 resume:
   checkpoint: ""

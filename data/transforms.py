@@ -41,7 +41,7 @@ class Resize(object):
 
     def __call__(self, image, target):
         image = F.resize(image, self.size)
-        target = F.resize(target, self.size, interpolation=T.InterpolationMode.NEAREST)
+        target = F.resize(target, self.size, interpolation=T.InterpolationMode.BILINEAR)
         return image, target
 
 

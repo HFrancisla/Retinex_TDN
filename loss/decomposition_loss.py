@@ -9,8 +9,9 @@ Retinex 分解损失函数。
   pure_low_double_point,  pure_low_double_pixel,
   pure_low_single_point,  pure_low_single_pixel
 
-_point: 光照标量 L [B,1,1,1]，anchor 约束全局亮度，无 smooth。
-_pixel: 逐像素光照 L [B,1,H,W]，anchor 只约束均值亮度，带 Retinex smooth。
+_point: 光照标量 L [B,1,1,1]，无 smooth。
+_pixel: 逐像素光照 L [B,1,H,W]，带 Retinex smooth。
+anchor_version=v1/v2 用于切换两套 Point/Pixel anchor 定义。
 """
 
 import torch
@@ -71,19 +72,38 @@ def gradient_no_abs(maps, direction, device=None, kernel='sobel'):
 
 # ========================= point / pixel 共用辅助 ============================
 
-def _point_anchor_loss(L, I):
-    """Point anchor: L1(max(I), L) — 标量 L 空间均值自然生效。"""
-    max_val = torch.max(I, dim=1, keepdim=True)[0]
-    return F.l1_loss(max_val, L.expand_as(max_val))
+_ANCHOR_VERSIONS = {'v1', 'v2'}
 
 
-def _pixel_anchor_loss(L, I):
-    """Pixel anchor: 只约束均值亮度，避免逐像素 shortcut。"""
-    max_val = torch.max(I, dim=1, keepdim=True)[0]
-    return F.l1_loss(
-        max_val.mean(dim=[2, 3], keepdim=True),
-        L.mean(dim=[2, 3], keepdim=True),
-    )
+def _validate_anchor_version(anchor_version):
+    if anchor_version not in _ANCHOR_VERSIONS:
+        raise ValueError(
+            f"anchor_version must be one of {sorted(_ANCHOR_VERSIONS)}, "
+            f"got {anchor_version!r}"
+        )
+
+
+def _point_anchor_loss(L, I, anchor_version='v2'):
+    """Point anchor，支持 v1 max-RGB map 与 v2 全局最大值。"""
+    _validate_anchor_version(anchor_version)
+    if anchor_version == 'v1':
+        max_rgb_map = I.amax(dim=1, keepdim=True)
+        return F.l1_loss(L.expand_as(max_rgb_map), max_rgb_map)
+
+    target = I.amax(dim=(1, 2, 3), keepdim=True)
+    prediction = L.mean(dim=(2, 3), keepdim=True)
+    return F.l1_loss(prediction, target)
+
+
+def _pixel_anchor_loss(L, I, anchor_version='v2'):
+    """Pixel anchor，支持 v1 mean(max-RGB) 与 v2 mean(RGB)。"""
+    _validate_anchor_version(anchor_version)
+    if anchor_version == 'v1':
+        target = I.amax(dim=1, keepdim=True).mean(dim=(2, 3), keepdim=True)
+    else:
+        target = I.mean(dim=(1, 2, 3), keepdim=True)
+    prediction = L.mean(dim=(2, 3), keepdim=True)
+    return F.l1_loss(prediction, target)
 
 
 def _retinex_smooth(L, R):
@@ -92,28 +112,44 @@ def _retinex_smooth(L, R):
     L 在 R 平坦处应平滑，在 R 边缘处可跳变。
     L: [B, 1, H, W],  R: [B, 3, H, W]
     """
-    R_gray = 0.299 * R[:, 0:1] + 0.587 * R[:, 1:2] + 0.114 * R[:, 2:3]
-    dev = L.device
-    kx = torch.FloatTensor([[0, 0], [-1, 1]]).view(1, 1, 2, 2).to(dev)
-    ky = kx.permute(0, 1, 3, 2)
+    # R 只作为边缘引导，不允许 smooth 项通过制造 R 边缘来规避 L 平滑约束。
+    R_gray = (0.299 * R[:, 0:1] + 0.587 * R[:, 1:2] + 0.114 * R[:, 2:3]).detach()
 
-    def _g(t, d):
-        return F.conv2d(t, kx if d == 'x' else ky, stride=1, padding=1).abs()
-
-    def _ag(t, d):
-        return F.avg_pool2d(_g(t, d), kernel_size=3, stride=1, padding=1)
-
-    return torch.mean(
-        _g(L, 'x') * torch.exp(-10 * _ag(R_gray, 'x'))
-        + _g(L, 'y') * torch.exp(-10 * _ag(R_gray, 'y'))
-    )
+    terms = []
+    if L.shape[-1] > 1:
+        grad_l_x = (L[:, :, :, 1:] - L[:, :, :, :-1]).abs()
+        grad_r_x = (R_gray[:, :, :, 1:] - R_gray[:, :, :, :-1]).abs()
+        terms.append((grad_l_x * torch.exp(-10 * grad_r_x)).mean())
+    if L.shape[-2] > 1:
+        grad_l_y = (L[:, :, 1:, :] - L[:, :, :-1, :]).abs()
+        grad_r_y = (R_gray[:, :, 1:, :] - R_gray[:, :, :-1, :]).abs()
+        terms.append((grad_l_y * torch.exp(-10 * grad_r_y)).mean())
+    return sum(terms, L.new_zeros(()))
 
 
-def _anchor_loss(L, I, l_type):
-    """根据 l_type 选择 anchor 损失。"""
+def _anchor_loss(L, I, l_type, anchor_version='v2'):
+    """根据 l_type 和 anchor_version 选择 anchor 损失。"""
     if l_type == 'point':
-        return _point_anchor_loss(L, I)
-    return _pixel_anchor_loss(L, I)
+        return _point_anchor_loss(L, I, anchor_version)
+    return _pixel_anchor_loss(L, I, anchor_version)
+
+
+_LOSS_COMPONENTS = (
+    'recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
+    'self_recon', 'equal_r', 'reflect',
+)
+
+
+def _loss_output(total, components, **details):
+    """构造统一损失输出，同时暴露 raw 值和加权后对 total 的贡献。"""
+    zero = total.new_zeros(())
+    output = {'total_loss': total}
+    for name in _LOSS_COMPONENTS:
+        raw, weighted = components.get(name, (zero, zero))
+        output[f'{name}_loss'] = raw
+        output[f'{name}_weighted_loss'] = weighted
+    output.update(details)
+    return output
 
 
 # ============================== PairedLoss ==================================
@@ -185,13 +221,18 @@ class PairedLoss(nn.Module):
                            + self.smooth_weight * loss_smooth
                            + self.equal_r_weight * self.equal_R_loss)
 
-        return (
+        return _loss_output(
             self.loss_Decom,
-            self.recon_loss_low + self.recon_loss_high,
-            zero,   # anchor placeholder
-            zero,   # bdsp placeholder
-            loss_smooth,
-            zero,   # self_recon placeholder
+            {
+                'recon': (self.recon_loss_low + self.recon_loss_high, loss_recon),
+                'cross_recon': (self.recon_loss_crs_low + self.recon_loss_crs_high, loss_cross),
+                'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
+                'equal_r': (self.equal_R_loss, self.equal_r_weight * self.equal_R_loss),
+            },
+            recon_low_loss=self.recon_loss_low,
+            recon_high_loss=self.recon_loss_high,
+            cross_recon_low_loss=self.recon_loss_crs_low,
+            cross_recon_high_loss=self.recon_loss_crs_high,
         )
 
 
@@ -205,9 +246,12 @@ class UnpairedLoss(nn.Module):
     """
 
     def __init__(self, l_type='point', recon_weight=1, anchor_weight=0.05,
-                 bdsp_weight=0.05, smooth_weight=0, self_recon_weight=0.05):
+                 bdsp_weight=0.05, smooth_weight=0, self_recon_weight=0.05,
+                 anchor_version='v2'):
         super().__init__()
+        _validate_anchor_version(anchor_version)
         self.l_type = l_type
+        self.anchor_version = anchor_version
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
@@ -227,8 +271,12 @@ class UnpairedLoss(nn.Module):
         self.recon_loss_high = F.l1_loss(R_high * L_high_3, I_high)
         loss_recon = self.recon_loss_low + self.recon_loss_high
 
-        self.recon_loss_anchor_low = _anchor_loss(L_low, I_low, self.l_type)
-        self.recon_loss_anchor_high = _anchor_loss(L_high, I_high, self.l_type)
+        self.recon_loss_anchor_low = _anchor_loss(
+            L_low, I_low, self.l_type, self.anchor_version
+        )
+        self.recon_loss_anchor_high = _anchor_loss(
+            L_high, I_high, self.l_type, self.anchor_version
+        )
         loss_anchor = self.recon_loss_anchor_low + self.recon_loss_anchor_high
 
         if self.bdsp_weight > 0:
@@ -238,7 +286,11 @@ class UnpairedLoss(nn.Module):
             self.bdsp_loss = zero
 
         if self.self_recon_weight > 0:
-            self.self_recon_loss = F.l1_loss(L_R_low, L_R_high)
+            # unpaired 图像没有空间对应关系，只比较每个样本的全局统计量。
+            self.self_recon_loss = F.l1_loss(
+                L_R_low.mean(dim=(2, 3), keepdim=True),
+                L_R_high.mean(dim=(2, 3), keepdim=True),
+            )
         else:
             self.self_recon_loss = zero
 
@@ -259,8 +311,13 @@ class UnpairedLoss(nn.Module):
             + self.smooth_weight * loss_smooth
         )
 
-        return (self.loss_Decom, loss_recon, loss_anchor,
-                self.bdsp_loss, loss_smooth, self.self_recon_loss)
+        return _loss_output(self.loss_Decom, {
+            'recon': (loss_recon, self.recon_weight * loss_recon),
+            'anchor': (loss_anchor, self.anchor_weight * loss_anchor),
+            'bdsp': (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss),
+            'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
+            'self_recon': (self.self_recon_loss, self.self_recon_weight * self.self_recon_loss),
+        })
 
 
 # ============================== PureLowDoubleLoss ===========================
@@ -274,9 +331,11 @@ class PureLowDoubleLoss(nn.Module):
 
     def __init__(self, l_type='point', recon_weight=1.0, anchor_weight=0.05,
                  bdsp_weight=0.05, self_recon_weight=0.05, reflect_weight=0.0,
-                 smooth_weight=0):
+                 smooth_weight=0, anchor_version='v2'):
         super().__init__()
+        _validate_anchor_version(anchor_version)
         self.l_type = l_type
+        self.anchor_version = anchor_version
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
@@ -297,8 +356,8 @@ class PureLowDoubleLoss(nn.Module):
         self.recon_loss_2 = F.l1_loss(R2 * L2_3, I2)
         loss_recon = self.recon_loss_1 + self.recon_loss_2
 
-        self.anchor_loss_1 = _anchor_loss(L1, I1, self.l_type)
-        self.anchor_loss_2 = _anchor_loss(L2, I2, self.l_type)
+        self.anchor_loss_1 = _anchor_loss(L1, I1, self.l_type, self.anchor_version)
+        self.anchor_loss_2 = _anchor_loss(L2, I2, self.l_type, self.anchor_version)
         loss_anchor = self.anchor_loss_1 + self.anchor_loss_2
 
         if self.bdsp_weight > 0:
@@ -313,7 +372,10 @@ class PureLowDoubleLoss(nn.Module):
             self.self_recon_loss = zero
 
         if self.reflect_weight > 0:
-            self.reflect_loss = F.l1_loss(R1, R2.detach()) + F.l1_loss(R2, R1.detach())
+            # 对称 stop-gradient，但取平均以保持与单个 L1 相同的数值尺度。
+            self.reflect_loss = 0.5 * (
+                F.l1_loss(R1, R2.detach()) + F.l1_loss(R2, R1.detach())
+            )
         else:
             self.reflect_loss = zero
 
@@ -333,8 +395,14 @@ class PureLowDoubleLoss(nn.Module):
             + self.smooth_weight * loss_smooth
         )
 
-        return (self.loss_Decom, loss_recon, loss_anchor,
-                self.bdsp_loss, loss_smooth, self.self_recon_loss)
+        return _loss_output(self.loss_Decom, {
+            'recon': (loss_recon, self.recon_weight * loss_recon),
+            'anchor': (loss_anchor, self.anchor_weight * loss_anchor),
+            'bdsp': (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss),
+            'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
+            'self_recon': (self.self_recon_loss, self.self_recon_weight * self.self_recon_loss),
+            'reflect': (self.reflect_loss, self.reflect_weight * self.reflect_loss),
+        })
 
 
 # ============================== PureLowSingleLoss ===========================
@@ -347,9 +415,11 @@ class PureLowSingleLoss(nn.Module):
     """
 
     def __init__(self, l_type='point', recon_weight=1.0, anchor_weight=0.05,
-                 bdsp_weight=0.05, smooth_weight=0):
+                 bdsp_weight=0.05, smooth_weight=0, anchor_version='v2'):
         super().__init__()
+        _validate_anchor_version(anchor_version)
         self.l_type = l_type
+        self.anchor_version = anchor_version
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
@@ -365,7 +435,7 @@ class PureLowSingleLoss(nn.Module):
 
         loss_recon = F.l1_loss(R * L_3, I)
 
-        loss_anchor = _anchor_loss(L, I, self.l_type)
+        loss_anchor = _anchor_loss(L, I, self.l_type, self.anchor_version)
 
         if self.bdsp_weight > 0:
             loss_bdsp = F.l1_loss(BDSP_Face(R), BDSP_Face(I))
@@ -384,4 +454,9 @@ class PureLowSingleLoss(nn.Module):
             + self.smooth_weight * loss_smooth
         )
 
-        return (self.loss_Decom, loss_recon, loss_anchor, loss_bdsp, loss_smooth, zero)
+        return _loss_output(self.loss_Decom, {
+            'recon': (loss_recon, self.recon_weight * loss_recon),
+            'anchor': (loss_anchor, self.anchor_weight * loss_anchor),
+            'bdsp': (loss_bdsp, self.bdsp_weight * loss_bdsp),
+            'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
+        })

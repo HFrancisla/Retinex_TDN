@@ -60,7 +60,35 @@ configs/
 - **batch_size**：LOLv2 数据集统一 `8`，BDD100k 数据集统一 `4`
 - **crop_size**：LOLv2 为 `384`，BDD100k 为 `512`
 - **training 超参**：所有配置统一 `max_iterations=10000`、`lr=1e-4`、`warmup=1000`
-- **验证频率**：每 `2000` step 验证一次，验证 batch size 固定为 `1`
+- **验证频率**：每 `500` step 验证一次，验证 batch size 固定为 `4`
+
+### Anchor 版本
+
+所有包含 anchor 的 loss 必须显式配置：
+
+```yaml
+loss:
+  anchor_version: "v2"  # 或 "v1"
+```
+
+| L 类型 | `v1` | `v2` |
+|---|---|---|
+| Point | 标量 L 拟合逐像素 max-RGB map | 标量 L 拟合每张图的全局最大值 |
+| Pixel | `mean(L)` 拟合 `mean(max-RGB)` | `mean(L)` 拟合整张 RGB 图像均值 |
+
+`anchor_version` 会紧跟 anchor 写入自动实验名，例如 `0.05anchorv1` / `0.05anchorv2`。
+所有包含 anchor 的配置文件名也必须使用相同格式；不允许保留无版本号的 `0.05anchor_...`。
+
+### Anchor 基准对比配置
+
+四个网络均为 LOLv2、BDD 各提供一对严格匹配的基准配置：
+
+```text
+*anchorv1_*.yaml  # anchor_version: v1
+*anchorv2_*.yaml  # anchor_version: v2
+```
+
+同一对配置除 `loss.anchor_version` 外完全一致，可直接用于公平对比。
 
 ## 推荐用法
 
