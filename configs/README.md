@@ -60,6 +60,7 @@ configs/
 - **batch_size**：LOLv2 数据集统一 `8`，BDD100k 数据集统一 `4`
 - **crop_size**：LOLv2 为 `384`，BDD100k 为 `512`
 - **training 超参**：所有配置统一 `max_iterations=10000`、`lr=1e-4`、`warmup=1000`
+- **验证频率**：每 `2000` step 验证一次，验证 batch size 固定为 `1`
 
 ## 推荐用法
 
