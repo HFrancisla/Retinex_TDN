@@ -17,6 +17,7 @@ data:
   mode: "pure_low_single"
   crop_size: 384
   batch_size: 8
+  val_batch_size: 4
   num_workers: 4
 
 model:
@@ -32,7 +33,7 @@ training:
   max_iterations: 10000
   lr: 0.0001
   warmup_iterations: 1000
-  log_interval: 100
+  log_interval: 200
   save_ckpt_interval: 0
   eval:
     eval_interval: 2000
