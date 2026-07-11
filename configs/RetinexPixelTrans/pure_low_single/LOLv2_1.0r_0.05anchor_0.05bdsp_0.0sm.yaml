@@ -1,5 +1,6 @@
+# RetinexPixelTrans — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "pure_low_single_lolv2_pixel_classic"
+  name: "LOLv2_1.0r_0.05anchor_0.05bdsp_0.0sm"
   auto_name: true
 
 data:
@@ -10,13 +11,15 @@ data:
   num_workers: 4
 
 model:
-  name: "RetinexPixelClassic"
+  name: "RetinexPixelTrans"
   dim: 24
-  l_channel: 32
+  l_heads: 1
+  l_ffn_expansion: 2.66
   use_dp: false
   gpu_id: "0"
 
 training:
+  seed: 42
   max_iterations: 10000
   lr: 0.0001
   warmup_iterations: 1000
@@ -29,10 +32,10 @@ training:
 
 loss:
   mode: "pure_low_single_pixel"
-  recon_weight: 1
+  recon_weight: 1.0
   anchor_weight: 0.05
   bdsp_weight: 0.05
-  smooth_weight: 0.1
+  smooth_weight: 0.0
 
 resume:
   checkpoint: ""

@@ -125,11 +125,14 @@ def generate_experiment_name(cfg):
     else:
         mode = full_mode  # 兜底
 
-    # 非零损失权重
+    # 损失权重：显式声明的全部输出，方便横向对比
     parts = []
     for key, abbr in LOSS_ABBR:
-        val = loss_cfg.get(key, 0)
-        if val:
+        if key in loss_cfg:
+            val = loss_cfg[key]
+            # 整数值自动补 .0 (1→1.0, 0→0.0)
+            if isinstance(val, (int, float)) and float(val).is_integer():
+                val = f"{float(val):.1f}"
             parts.append(f"{val}{abbr}")
 
     return "_".join([dataset, mode] + parts)
@@ -339,9 +342,11 @@ def main(args):
                                       transform=data_transform["val"])
 
     batch_size = data_cfg.get("batch_size", 2)
+    val_batch_size = data_cfg.get("val_batch_size", 1)
     num_workers = data_cfg.get("num_workers", 0)
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])
-    print('Using {} dataloader workers every process'.format(nw))
+    print(f'Using {nw} dataloader workers for train_loader (batch_size={batch_size})')
+    print(f'val_loader: batch_size={val_batch_size}')
 
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=batch_size,
@@ -351,7 +356,7 @@ def main(args):
                                                collate_fn=train_dataset.collate_fn)
 
     val_loader = torch.utils.data.DataLoader(val_dataset,
-                                             batch_size=1,
+                                             batch_size=val_batch_size,
                                              shuffle=False,
                                              pin_memory=True,
                                              num_workers=0,

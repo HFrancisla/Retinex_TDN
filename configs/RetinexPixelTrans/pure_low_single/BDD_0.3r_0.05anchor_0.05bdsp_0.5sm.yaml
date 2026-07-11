@@ -1,5 +1,5 @@
 # ============================================================
-# 2×2 消融实验 — 配置 A (基线)  [BDD_below40]
+# 2×2 消融实验 — 配置 D (推荐优先跑)  [BDD_below40]
 # ============================================================
 # 变量: recon_weight × smooth_weight (anchor/bdsp 固定 0.05)
 #
@@ -7,16 +7,19 @@
 #   B: recon=1.0  smooth=0.5  → 单独检验 smooth 的效应
 #   C: recon=0.3  smooth=0.1  → 单独检验 recon 的效应
 #   D: recon=0.3  smooth=0.5  → 两项联合调整（推荐优先跑）
+#
+# 优先级: D > B > C > A
 # ============================================================
 experiment:
-  name: "ablation_2x2_A_baseline"
+  name: "ablation_2x2_D_recommended"
   auto_name: true
 
 data:
-  path: "datasets/BDD_below40"
+  path: "/home/ipr4090/2024_hzf/Datasets/BDDnight"
   mode: "pure_low_single"
   crop_size: 512
   batch_size: 4
+  val_batch_size: 4
   num_workers: 4
 
 model:
@@ -41,10 +44,10 @@ training:
 
 loss:
   mode: "pure_low_single_pixel"
-  recon_weight: 1.0
+  recon_weight: 0.3
   anchor_weight: 0.05
   bdsp_weight: 0.05
-  smooth_weight: 0.1
+  smooth_weight: 0.5
 
 resume:
   checkpoint: ""

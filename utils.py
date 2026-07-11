@@ -173,9 +173,18 @@ def read_data(root: str, mode: str):
     assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
 
     train_root = os.path.join(root, "train")
-    val_root = os.path.join(root, "test")
     assert os.path.exists(train_root), "train root: {} does not exist.".format(train_root)
-    assert os.path.exists(val_root), "val root: {} does not exist.".format(val_root)
+
+    val_root = os.path.join(root, "val")
+    if not os.path.exists(val_root):
+        test_root = os.path.join(root, "test")
+        if os.path.exists(test_root):
+            print(f"[read_data] 'val' not found, fallback to 'test'")
+            val_root = test_root
+        else:
+            raise FileNotFoundError(
+                f"Neither 'val' nor 'test' directory exists in {root}."
+            )
 
     train_images_low_path = []
     train_images_high_path = []
@@ -240,9 +249,18 @@ def read_pure_low_data(root: str):
     assert os.path.exists(root), "dataset root: {} does not exist.".format(root)
 
     train_root = os.path.join(root, "train")
-    val_root = os.path.join(root, "test")
     assert os.path.exists(train_root), "train root: {} does not exist.".format(train_root)
-    assert os.path.exists(val_root), "val root: {} does not exist.".format(val_root)
+
+    val_root = os.path.join(root, "val")
+    if not os.path.exists(val_root):
+        test_root = os.path.join(root, "test")
+        if os.path.exists(test_root):
+            print(f"[read_pure_low_data] 'val' not found, fallback to 'test'")
+            val_root = test_root
+        else:
+            raise FileNotFoundError(
+                f"Neither 'val' nor 'test' directory exists in {root}."
+            )
 
     supported = [".jpg", ".JPG", ".png", ".PNG"]
 
@@ -454,66 +472,69 @@ def evaluate(model, data_loader, device, lr, filefold_path,
         mininterval=1.0,
         leave=False,
     )
-    for step, data in enumerate(data_loader):
-        # --- 统一提取 low 图像并分解（所有模式一致）---
-        if isinstance(data, (tuple, list)):
-            I_low = data[0]
-        else:
-            I_low = data
-        if torch.cuda.is_available():
-            I_low = I_low.to(device)
-
-        R_low, L_low = model(I_low)
-
-        if save_images and save_count < max_save_images:
-            R_low_img = tensor2numpy_R(R_low)
-            L_low_img = tensor2numpy_L(L_low)
-            save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
-            save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
-            save_count += 1
-
-        # --- 损失计算（按模式分支）---
-        if isinstance(loss_function, PureLowSingleLoss):
-            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-                loss_function(R_low, L_low, I_low)
-        else:
+    with torch.no_grad():
+        for step, data in enumerate(data_loader):
+            # --- 统一提取 low 图像并分解（所有模式一致）---
             if isinstance(data, (tuple, list)):
-                I_high = data[1]
+                I_low = data[0]
             else:
-                I_high = data
+                I_low = data
             if torch.cuda.is_available():
-                I_high = I_high.to(device)
+                I_low = I_low.to(device)
 
-            R_high, L_high = model(I_high)
+            R_low, L_low = model(I_low)
 
-            # Skip extra forward pass when self_recon_weight == 0
-            if loss_function.self_recon_weight > 0:
-                _, L_R_low = model(R_low)
-                _, L_R_high = model(R_high)
+            if save_images and save_count < max_save_images:
+                R_low_img = tensor2numpy_R(R_low)
+                L_low_img = tensor2numpy_L(L_low)
+                save_pic(R_low_img, evalfold_path, str(step) + "_R_low")
+                save_pic(L_low_img, evalfold_path, str(step) + "_L_low")
+                save_count += 1
+
+            # --- 损失计算（按模式分支）---
+            if isinstance(loss_function, PureLowSingleLoss):
+                loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
+                    loss_function(R_low, L_low, I_low)
             else:
-                L_R_low = None
-                L_R_high = None
+                if isinstance(data, (tuple, list)):
+                    I_high = data[1]
+                else:
+                    I_high = data
+                if torch.cuda.is_available():
+                    I_high = I_high.to(device)
 
-            loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
-                loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
+                R_high, L_high = model(I_high)
 
-            with torch.no_grad():
-                psnr_val = calculate_psnr(R_low.clamp(0, 1), I_high.clamp(0, 1))
-                batch_size = I_low.shape[0]
-                accu_psnr += psnr_val * batch_size
-                psnr_count += batch_size
+                # Skip extra forward pass when self_recon_weight == 0
+                if loss_function.self_recon_weight > 0:
+                    _, L_R_low = model(R_low)
+                    _, L_R_high = model(R_high)
+                else:
+                    L_R_low = None
+                    L_R_high = None
 
-        batch_size = I_low.shape[0]
+                loss, loss_recon, loss_anchor, loss_bdsp, loss_smooth, loss_self_recon = \
+                    loss_function(R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high)
 
-        # loss 函数返回 batch 内均值，因此按 batch 样本数加权，确保最后一个
-        # 不足 batch_size 的 batch 不会与完整 batch 获得相同权重。
-        accu_total_loss += loss * batch_size
-        accu_recon_loss += loss_recon * batch_size
-        accu_anchor_loss += loss_anchor * batch_size
-        accu_bdsp_loss += loss_bdsp * batch_size
-        accu_smooth_loss += loss_smooth * batch_size
-        accu_self_recon_loss += loss_self_recon * batch_size
-        sample_count += batch_size
+                # PSNR 仅在 paired 模式下有意义（R_low 与配对 GT I_high 比较）。
+                # unpaired / pure_low_double 的 I_high 是随机采样或增强视图，比较结果不可信。
+                if isinstance(loss_function, PairedLoss):
+                    psnr_val = calculate_psnr(R_low.clamp(0, 1), I_high.clamp(0, 1))
+                    batch_size = I_low.shape[0]
+                    accu_psnr += psnr_val * batch_size
+                    psnr_count += batch_size
+
+            batch_size = I_low.shape[0]
+
+            # loss 函数返回 batch 内均值，因此按 batch 样本数加权，确保最后一个
+            # 不足 batch_size 的 batch 不会与完整 batch 获得相同权重。
+            accu_total_loss += loss * batch_size
+            accu_recon_loss += loss_recon * batch_size
+            accu_anchor_loss += loss_anchor * batch_size
+            accu_bdsp_loss += loss_bdsp * batch_size
+            accu_smooth_loss += loss_smooth * batch_size
+            accu_self_recon_loss += loss_self_recon * batch_size
+            sample_count += batch_size
 
     if save_images and save_count >= max_save_images:
         print(f"\n[visualization] Reached max_save_images limit ({max_save_images}), "

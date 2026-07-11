@@ -13,10 +13,11 @@ experiment:
   auto_name: true
 
 data:
-  path: "datasets/BDD_below40"
+  path: "/home/ipr4090/2024_hzf/Datasets/BDDnight"
   mode: "pure_low_single"
   crop_size: 512
   batch_size: 4
+  val_batch_size: 4
   num_workers: 4
 
 model:

@@ -1,0 +1,46 @@
+# RetinexPixelTransMinus — LOLv2 paired 基线 (损失全部使用代码默认值)
+experiment:
+  name: "LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1sm"
+  auto_name: true
+
+data:
+  path: "datasets/LOLv2"
+  mode: "paired"
+  crop_size: 384
+  batch_size: 4
+  num_workers: 4
+
+model:
+  name: "RetinexPixelTransMinus"
+  dim: 24
+  l_heads: 1
+  l_ffn_expansion: 2.66
+  use_dp: false
+  gpu_id: "0"
+
+training:
+  seed: 42
+  max_iterations: 10000
+  lr: 0.0001
+  warmup_iterations: 1000
+  log_interval: 1000
+  save_ckpt_interval: 0
+  eval:
+    eval_interval: 2000
+    save_img_interval: 10000
+    save_best_ckpt: true
+
+loss:
+  mode: "paired_pixel"
+  recon_weight_high: 1.0
+  recon_weight_low: 0.3
+  cross_recon_weight_low: 0.001
+  cross_recon_weight_high: 0.001
+  smooth_weight: 0.1
+  equal_r_weight: 0.1
+
+resume:
+  checkpoint: ""
+  weights: ""
+
+device: "cuda"

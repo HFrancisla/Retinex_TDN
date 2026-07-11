@@ -1,12 +1,13 @@
+# RetinexPixelClassic — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "pure_low_single_night_20k_pixel_classic"
+  name: "LOLv2_1.0r_0.05anchor_0.05bdsp_0.0sm"
   auto_name: true
 
 data:
-  path: "datasets/BDD_below40"
+  path: "datasets/LOLv2"
   mode: "pure_low_single"
-  crop_size: 512
-  batch_size: 4
+  crop_size: 384
+  batch_size: 8
   num_workers: 4
 
 model:
@@ -17,6 +18,7 @@ model:
   gpu_id: "0"
 
 training:
+  seed: 42
   max_iterations: 10000
   lr: 0.0001
   warmup_iterations: 1000
@@ -29,10 +31,10 @@ training:
 
 loss:
   mode: "pure_low_single_pixel"
-  recon_weight: 1
+  recon_weight: 1.0
   anchor_weight: 0.05
   bdsp_weight: 0.05
-  smooth_weight: 0.1
+  smooth_weight: 0.0
 
 resume:
   checkpoint: ""

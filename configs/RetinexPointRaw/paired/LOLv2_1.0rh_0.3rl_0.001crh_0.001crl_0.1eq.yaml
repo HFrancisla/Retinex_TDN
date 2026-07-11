@@ -1,5 +1,6 @@
+# RetinexPointRaw — LOLv2 paired 基线 (损失全部使用代码默认值)
 experiment:
-  name: "paired"
+  name: "LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq"
   auto_name: true
 
 data:
@@ -15,20 +16,20 @@ model:
   gpu_id: "0"
 
 training:
+  seed: 42
   max_iterations: 10000
   lr: 0.0001
-  warmup_iterations: 1000       # 线性 warmup 步数
-  log_interval: 1000        # 每 N 步打印训练日志
+  warmup_iterations: 1000
+  log_interval: 1000
   save_ckpt_interval: 0
   eval:
     eval_interval: 2000
-    save_img_interval: 10000  # 每 N 步保存可视化图片（必须是 eval.eval_interval 的整数倍）
+    save_img_interval: 10000
     save_best_ckpt: true
 
 loss:
-  # paired_point 模式: 仅支持 recon_weight_high/low, cross_recon_weight_high/low, equal_r_weight
   mode: "paired_point"
-  recon_weight_high: 1
+  recon_weight_high: 1.0
   recon_weight_low: 0.3
   cross_recon_weight_low: 0.001
   cross_recon_weight_high: 0.001
