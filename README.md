@@ -115,8 +115,12 @@ LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr
 | `anchor_version` | `v1` / `v2` | Anchor 定义版本；与 anchor 合并为 `0.05anchorv1/v2` |
 | `bdsp_weight` | `bdsp` | BDSP 结构保持 |
 | `smooth_weight` | `sm` | 光照平滑（仅 `_pixel` 模式） |
+| `smooth_version` | `v1` / `v2` / `v3` | Raw / Current / Compromise；与 smooth 合并为 `0.1smv1/v2/v3` |
 | `self_recon_weight` | `sr` | 自重构约束 |
 | `reflect_weight` | `ref` | 反射约束 |
+
+Smooth loss 的 Raw、Current 与 Compromise 三种设计说明见
+[docs/smooth_loss_variants.md](docs/smooth_loss_variants.md)。
 
 ### TensorBoard
 

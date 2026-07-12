@@ -134,6 +134,8 @@ def generate_experiment_name(cfg):
                 val = f"{float(val):.1f}"
             if key == 'anchor_weight' and 'anchor_version' in loss_cfg:
                 parts.append(f"{val}{abbr}{loss_cfg['anchor_version']}")
+            elif key == 'smooth_weight' and 'smooth_version' in loss_cfg:
+                parts.append(f"{val}{abbr}{loss_cfg['smooth_version']}")
             else:
                 parts.append(f"{val}{abbr}")
 

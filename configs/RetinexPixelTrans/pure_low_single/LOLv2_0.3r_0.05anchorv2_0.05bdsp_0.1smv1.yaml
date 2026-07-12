@@ -1,5 +1,5 @@
 # ============================================================
-# 2×2 消融实验 — 配置 A (基线)  [BDD_below40]
+# 2×2 消融实验 — 配置 C (弱重建)
 # ============================================================
 # 变量: recon_weight × smooth_weight (anchor/bdsp 固定 0.05)
 #
@@ -9,14 +9,14 @@
 #   D: recon=0.3  smooth=0.5  → 两项联合调整（推荐优先跑）
 # ============================================================
 experiment:
-  name: "BDD_1.0r_0.05anchorv2_0.05bdsp_0.1sm"
+  name: "LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1"
   auto_name: true
 
 data:
-  path: "/home/ipr4090/2024_hzf/Datasets/BDDnight"
+  path: "datasets/LOLv2"
   mode: "pure_low_single"
-  crop_size: 512
-  batch_size: 4
+  crop_size: 384
+  batch_size: 8
   val_batch_size: 4
   num_workers: 4
 
@@ -42,11 +42,12 @@ training:
 
 loss:
   mode: "pure_low_single_pixel"
-  recon_weight: 1.0
+  recon_weight: 0.3
   anchor_weight: 0.05
   anchor_version: "v2"
   bdsp_weight: 0.05
   smooth_weight: 0.1
+  smooth_version: "v1"
 
 resume:
   checkpoint: ""

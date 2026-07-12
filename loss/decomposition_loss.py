@@ -12,6 +12,7 @@ Retinex 分解损失函数。
 _point: 光照标量 L [B,1,1,1]，无 smooth。
 _pixel: 逐像素光照 L [B,1,H,W]，带 Retinex smooth。
 anchor_version=v1/v2 用于切换两套 Point/Pixel anchor 定义。
+smooth_version=v1/v2/v3 对应 Raw/Current/Compromise 三套 Pixel smooth 定义。
 """
 
 import torch
@@ -106,25 +107,83 @@ def _pixel_anchor_loss(L, I, anchor_version='v2'):
     return F.l1_loss(prediction, target)
 
 
-def _retinex_smooth(L, R):
-    """Retinex 平滑先验: |∇L| * exp(-10 * avg|∇R_gray|)。
+_SMOOTH_VERSIONS = {'v1', 'v2', 'v3'}
+
+
+def _validate_smooth_version(smooth_version):
+    if smooth_version not in _SMOOTH_VERSIONS:
+        raise ValueError(
+            f"smooth_version must be one of {sorted(_SMOOTH_VERSIONS)}, "
+            f"got {smooth_version!r}"
+        )
+
+
+def _gray_reflectance(R, detach=False):
+    gray = 0.299 * R[:, 0:1] + 0.587 * R[:, 1:2] + 0.114 * R[:, 2:3]
+    return gray.detach() if detach else gray
+
+
+def _retinex_smooth_v1(L, R):
+    """Raw：2×2 卷积差分 + 零填充 + 3×3 平均，梯度进入 R/L。"""
+    R_gray = _gray_reflectance(R, detach=False)
+    kx = L.new_tensor([[0, 0], [-1, 1]]).view(1, 1, 2, 2)
+    ky = kx.permute(0, 1, 3, 2)
+
+    def gradient(t, kernel):
+        return F.conv2d(t, kernel, stride=1, padding=1).abs()
+
+    grad_l_x = gradient(L, kx)
+    grad_l_y = gradient(L, ky)
+    guide_x = F.avg_pool2d(gradient(R_gray, kx), kernel_size=3, stride=1, padding=1)
+    guide_y = F.avg_pool2d(gradient(R_gray, ky), kernel_size=3, stride=1, padding=1)
+    return torch.mean(
+        grad_l_x * torch.exp(-10 * guide_x)
+        + grad_l_y * torch.exp(-10 * guide_y)
+    )
+
+
+def _finite_difference_terms(L, R_gray, use_local_average):
+    terms = []
+
+    def local_average(gradient):
+        if not use_local_average:
+            return gradient
+        padded = F.pad(gradient, (1, 1, 1, 1), mode='replicate')
+        return F.avg_pool2d(padded, kernel_size=3, stride=1, padding=0)
+
+    if L.shape[-1] > 1:
+        grad_l_x = (L[:, :, :, 1:] - L[:, :, :, :-1]).abs()
+        grad_r_x = (R_gray[:, :, :, 1:] - R_gray[:, :, :, :-1]).abs()
+        terms.append((grad_l_x * torch.exp(-10 * local_average(grad_r_x))).mean())
+    if L.shape[-2] > 1:
+        grad_l_y = (L[:, :, 1:, :] - L[:, :, :-1, :]).abs()
+        grad_r_y = (R_gray[:, :, 1:, :] - R_gray[:, :, :-1, :]).abs()
+        terms.append((grad_l_y * torch.exp(-10 * local_average(grad_r_y))).mean())
+    return sum(terms, L.new_zeros(()))
+
+
+def _retinex_smooth_v2(L, R):
+    """Current：真实相邻差分、无局部平均，R detach。"""
+    return _finite_difference_terms(L, _gray_reflectance(R, detach=True), False)
+
+
+def _retinex_smooth_v3(L, R):
+    """Compromise：真实相邻差分、3×3 replicate 平均，R detach。"""
+    return _finite_difference_terms(L, _gray_reflectance(R, detach=True), True)
+
+
+def _retinex_smooth(L, R, smooth_version='v1'):
+    """Retinex 平滑先验，v1/v2/v3 对应 Raw/Current/Compromise。
 
     L 在 R 平坦处应平滑，在 R 边缘处可跳变。
     L: [B, 1, H, W],  R: [B, 3, H, W]
     """
-    # R 只作为边缘引导，不允许 smooth 项通过制造 R 边缘来规避 L 平滑约束。
-    R_gray = (0.299 * R[:, 0:1] + 0.587 * R[:, 1:2] + 0.114 * R[:, 2:3]).detach()
-
-    terms = []
-    if L.shape[-1] > 1:
-        grad_l_x = (L[:, :, :, 1:] - L[:, :, :, :-1]).abs()
-        grad_r_x = (R_gray[:, :, :, 1:] - R_gray[:, :, :, :-1]).abs()
-        terms.append((grad_l_x * torch.exp(-10 * grad_r_x)).mean())
-    if L.shape[-2] > 1:
-        grad_l_y = (L[:, :, 1:, :] - L[:, :, :-1, :]).abs()
-        grad_r_y = (R_gray[:, :, 1:, :] - R_gray[:, :, :-1, :]).abs()
-        terms.append((grad_l_y * torch.exp(-10 * grad_r_y)).mean())
-    return sum(terms, L.new_zeros(()))
+    _validate_smooth_version(smooth_version)
+    if smooth_version == 'v1':
+        return _retinex_smooth_v1(L, R)
+    if smooth_version == 'v2':
+        return _retinex_smooth_v2(L, R)
+    return _retinex_smooth_v3(L, R)
 
 
 def _anchor_loss(L, I, l_type, anchor_version='v2'):
@@ -169,10 +228,13 @@ class PairedLoss(nn.Module):
         cross_recon_weight_low: float = 0.001,
         cross_recon_weight_high: float = 0.001,
         smooth_weight: float = 0.1,
+        smooth_version: str = 'v1',
         equal_r_weight: float = 0.1,
     ):
         super().__init__()
+        _validate_smooth_version(smooth_version)
         self.l_type = l_type
+        self.smooth_version = smooth_version
         self.recon_weight_high = recon_weight_high
         self.recon_weight_low = recon_weight_low
         self.cross_recon_weight_low = cross_recon_weight_low
@@ -209,8 +271,8 @@ class PairedLoss(nn.Module):
             self.equal_R_loss = zero
 
         if self.use_smooth:
-            self.Ismooth_loss_low = _retinex_smooth(L_low, R_low)
-            self.Ismooth_loss_high = _retinex_smooth(L_high, R_high)
+            self.Ismooth_loss_low = _retinex_smooth(L_low, R_low, self.smooth_version)
+            self.Ismooth_loss_high = _retinex_smooth(L_high, R_high, self.smooth_version)
             loss_smooth = self.Ismooth_loss_low + self.Ismooth_loss_high
         else:
             self.Ismooth_loss_low = zero
@@ -247,11 +309,13 @@ class UnpairedLoss(nn.Module):
 
     def __init__(self, l_type='point', recon_weight=1, anchor_weight=0.05,
                  bdsp_weight=0.05, smooth_weight=0, self_recon_weight=0.05,
-                 anchor_version='v2'):
+                 anchor_version='v2', smooth_version='v1'):
         super().__init__()
         _validate_anchor_version(anchor_version)
+        _validate_smooth_version(smooth_version)
         self.l_type = l_type
         self.anchor_version = anchor_version
+        self.smooth_version = smooth_version
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
@@ -295,8 +359,8 @@ class UnpairedLoss(nn.Module):
             self.self_recon_loss = zero
 
         if self.use_smooth:
-            self.Ismooth_loss_low = _retinex_smooth(L_low, R_low)
-            self.Ismooth_loss_high = _retinex_smooth(L_high, R_high)
+            self.Ismooth_loss_low = _retinex_smooth(L_low, R_low, self.smooth_version)
+            self.Ismooth_loss_high = _retinex_smooth(L_high, R_high, self.smooth_version)
             loss_smooth = self.Ismooth_loss_low + self.Ismooth_loss_high
         else:
             self.Ismooth_loss_low = zero
@@ -331,11 +395,13 @@ class PureLowDoubleLoss(nn.Module):
 
     def __init__(self, l_type='point', recon_weight=1.0, anchor_weight=0.05,
                  bdsp_weight=0.05, self_recon_weight=0.05, reflect_weight=0.0,
-                 smooth_weight=0, anchor_version='v2'):
+                 smooth_weight=0, anchor_version='v2', smooth_version='v1'):
         super().__init__()
         _validate_anchor_version(anchor_version)
+        _validate_smooth_version(smooth_version)
         self.l_type = l_type
         self.anchor_version = anchor_version
+        self.smooth_version = smooth_version
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
@@ -380,8 +446,8 @@ class PureLowDoubleLoss(nn.Module):
             self.reflect_loss = zero
 
         if self.use_smooth:
-            self.smooth_loss_1 = _retinex_smooth(L1, R1)
-            self.smooth_loss_2 = _retinex_smooth(L2, R2)
+            self.smooth_loss_1 = _retinex_smooth(L1, R1, self.smooth_version)
+            self.smooth_loss_2 = _retinex_smooth(L2, R2, self.smooth_version)
             loss_smooth = self.smooth_loss_1 + self.smooth_loss_2
         else:
             loss_smooth = zero
@@ -415,11 +481,14 @@ class PureLowSingleLoss(nn.Module):
     """
 
     def __init__(self, l_type='point', recon_weight=1.0, anchor_weight=0.05,
-                 bdsp_weight=0.05, smooth_weight=0, anchor_version='v2'):
+                 bdsp_weight=0.05, smooth_weight=0, anchor_version='v2',
+                 smooth_version='v1'):
         super().__init__()
         _validate_anchor_version(anchor_version)
+        _validate_smooth_version(smooth_version)
         self.l_type = l_type
         self.anchor_version = anchor_version
+        self.smooth_version = smooth_version
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
@@ -443,7 +512,7 @@ class PureLowSingleLoss(nn.Module):
             loss_bdsp = zero
 
         if self.use_smooth:
-            loss_smooth = _retinex_smooth(L, R)
+            loss_smooth = _retinex_smooth(L, R, self.smooth_version)
         else:
             loss_smooth = zero
 

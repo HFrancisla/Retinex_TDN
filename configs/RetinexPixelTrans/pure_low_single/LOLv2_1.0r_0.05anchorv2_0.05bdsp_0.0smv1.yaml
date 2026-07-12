@@ -1,20 +1,21 @@
-# RetinexPixelClassic — LOLv2 paired 基线 (损失全部使用代码默认值)
+# RetinexPixelTrans — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1sm"
+  name: "LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1"
   auto_name: true
 
 data:
   path: "datasets/LOLv2"
-  mode: "paired"
+  mode: "pure_low_single"
   crop_size: 384
-  batch_size: 4
+  batch_size: 8
   val_batch_size: 4
   num_workers: 4
 
 model:
-  name: "RetinexPixelClassic"
+  name: "RetinexPixelTrans"
   dim: 24
-  l_channel: 32
+  l_heads: 1
+  l_ffn_expansion: 2.66
   use_dp: false
   gpu_id: "0"
 
@@ -31,13 +32,13 @@ training:
     save_best_ckpt: true
 
 loss:
-  mode: "paired_pixel"
-  recon_weight_high: 1.0
-  recon_weight_low: 0.3
-  cross_recon_weight_low: 0.001
-  cross_recon_weight_high: 0.001
-  smooth_weight: 0.1
-  equal_r_weight: 0.1
+  mode: "pure_low_single_pixel"
+  recon_weight: 1.0
+  anchor_weight: 0.05
+  anchor_version: "v2"
+  bdsp_weight: 0.05
+  smooth_weight: 0.0
+  smooth_version: "v1"
 
 resume:
   checkpoint: ""

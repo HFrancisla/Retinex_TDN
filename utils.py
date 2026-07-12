@@ -74,7 +74,7 @@ _VALID_LOSS_FIELDS = {
     'paired_pixel': {
         'recon_weight_high', 'recon_weight_low',
         'cross_recon_weight_low', 'cross_recon_weight_high',
-        'smooth_weight', 'equal_r_weight',
+        'smooth_weight', 'smooth_version', 'equal_r_weight',
     },
     'unpaired_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
@@ -82,7 +82,7 @@ _VALID_LOSS_FIELDS = {
     },
     'unpaired_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'self_recon_weight', 'anchor_version',
+        'smooth_weight', 'smooth_version', 'self_recon_weight', 'anchor_version',
     },
     'pure_low_double_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
@@ -90,14 +90,14 @@ _VALID_LOSS_FIELDS = {
     },
     'pure_low_double_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'self_recon_weight', 'reflect_weight', 'anchor_version',
+        'smooth_weight', 'smooth_version', 'self_recon_weight', 'reflect_weight', 'anchor_version',
     },
     'pure_low_single_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight', 'anchor_version',
     },
     'pure_low_single_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'anchor_version',
+        'smooth_weight', 'smooth_version', 'anchor_version',
     },
 }
 
@@ -115,6 +115,7 @@ def _build_loss_function(loss_cfg):
 
     mode 格式: {data_mode}_{l_type}，其中 l_type 为 point 或 pixel。
     含 anchor 的模式必须显式指定 anchor_version: v1 或 v2。
+    所有 Pixel 模式必须显式指定 smooth_version: v1、v2 或 v3。
     仅允许当前模式支持的字段，多余字段会报错。
     """
     cfg = dict(loss_cfg or {})
