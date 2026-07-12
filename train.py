@@ -650,6 +650,12 @@ def main(args):
     last_eval_iter = checkpoint.get('last_eval_iter', -1) if checkpoint_path else -1
     train_start = time.perf_counter()
 
+    def _fmt(v):
+        """小值用科学计数法，避免 .4f 显示为 0.0000。"""
+        if abs(v) < 0.0001 and v != 0:
+            return f"{v:.2e}"
+        return f"{v:.4f}"
+
     def _start_epoch_iterator(epoch_index, skip_batches=0):
         """每个 epoch 使用独立确定性种子；resume 时重放至准确 batch 游标。"""
         epoch_seed = seed + epoch_index
@@ -734,8 +740,8 @@ def main(args):
         for name in ('recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
                      'self_recon', 'equal_r', 'reflect'):
             key = f'{name}_weighted_loss'
-            if abs(val_metrics.get(key, 0.0)) > 0:
-                parts.append(f'{name}(weighted): {val_metrics[key]:.4f}')
+            if key in val_metrics:
+                parts.append(f'{name}(weighted): {_fmt(val_metrics[key])}')
         if val_psnr is not None:
             parts.append(f'PSNR(proxy): {val_psnr:.2f}dB')
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -795,8 +801,8 @@ def main(args):
             for name in ('recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
                          'self_recon', 'equal_r', 'reflect'):
                 key = f'{name}_weighted_loss'
-                if abs(avg.get(key, 0.0)) > 0:
-                    parts.append(f'{name}(weighted): {avg[key]:.4f}')
+                if key in avg:
+                    parts.append(f'{name}(weighted): {_fmt(avg[key])}')
             parts.append(f"lr: {lr:.6f}")
             # 速度和 ETA
             elapsed = time.perf_counter() - train_start
