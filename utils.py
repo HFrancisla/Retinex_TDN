@@ -345,7 +345,7 @@ def _forward_loss(model, loss_function, data, device):
     if isinstance(loss_function, PureLowSingleLoss):
         I_low = data.to(device, non_blocking=non_blocking)
         R_low, L_low = model(I_low)
-        return loss_function(R_low, L_low, I_low), I_low, None, R_low, L_low
+        return loss_function(R_low, L_low, I_low), I_low, None, R_low, L_low, None
 
     I_low, I_high = data
     I_low = I_low.to(device, non_blocking=non_blocking)
@@ -363,7 +363,7 @@ def _forward_loss(model, loss_function, data, device):
     output = loss_function(
         R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high
     )
-    return output, I_low, I_high, R_low, L_low
+    return output, I_low, I_high, R_low, L_low, R_high
 
 
 def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
@@ -386,7 +386,7 @@ def train_step(model, optimizer, loss_function, data, device, lr_scheduler):
     """单步训练：在参数更新前拦截非有限 loss/gradient。"""
     model.train()
     optimizer.zero_grad(set_to_none=True)
-    output, I_low, _, _, _ = _forward_loss(model, loss_function, data, device)
+    output, I_low, _, _, _, _ = _forward_loss(model, loss_function, data, device)
     loss = output['total_loss']
 
     if not torch.isfinite(loss):
@@ -446,7 +446,7 @@ def evaluate(model, data_loader, device, lr, filefold_path,
     )
     with torch.no_grad():
         for step, data in enumerate(data_loader):
-            output, I_low, I_high, R_low, L_low = _forward_loss(
+            output, I_low, I_high, R_low, L_low, R_high = _forward_loss(
                 model, loss_function, data, device
             )
 
@@ -465,12 +465,12 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                              f"{image_index}_L_low")
                     save_count += 1
 
-            # PSNR 仅作为 paired 模式下 R_low 与配对 high 的代理指标。
-            if isinstance(loss_function, PairedLoss):
+            # PSNR 仅 paired 模式有意义：比较同一场景的 R_low vs R_high（反射分量应一致）
+            if isinstance(loss_function, PairedLoss) and R_high is not None:
                 for batch_index in range(I_low.shape[0]):
                     psnr_val = calculate_psnr(
                         R_low[batch_index:batch_index + 1].clamp(0, 1),
-                        I_high[batch_index:batch_index + 1].clamp(0, 1),
+                        R_high[batch_index:batch_index + 1].clamp(0, 1),
                     )
                     accu_psnr += psnr_val
                     psnr_count += 1

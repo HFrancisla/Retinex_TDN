@@ -789,7 +789,9 @@ def main(args):
         if global_iter % log_interval == 0:
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             avg = _averages(log_accum, log_sample_count)
-            parts = [f"total: {avg['total_loss']:.4f}"]
+            current_epoch = global_iter // iterations_per_epoch + 1  # 1-indexed
+            parts = [f"ep:{current_epoch}",
+                     f"total: {avg['total_loss']:.4f}"]
             for name in ('recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
                          'self_recon', 'equal_r', 'reflect'):
                 key = f'{name}_weighted_loss'
@@ -811,9 +813,8 @@ def main(args):
                 parts.append(f"time: {avg_time:.3f}s  ETA: {eta}")
             # GPU 显存
             if device.type == 'cuda':
-                mem_allocated = torch.cuda.memory_allocated() / 1024**3
                 mem_reserved = torch.cuda.memory_reserved() / 1024**3
-                parts.append(f"mem: {mem_allocated:.2f}GB")
+                parts.append(f"mem: {mem_reserved:.2f}GB")
             print(f"[{now}] [iter: {global_iter:>6d}/{max_iterations}] " + " | ".join(parts))
 
             # 下一条训练日志只统计新的 log_interval 个 step。
