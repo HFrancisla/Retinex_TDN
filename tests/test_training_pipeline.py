@@ -226,7 +226,7 @@ def test_point_model_returns_scalar_illumination():
     assert illumination.shape == (2, 1, 1, 1)
 
 
-def test_evaluate_saves_every_image_in_multi_image_batch(tmp_path):
+def test_paired_evaluate_saves_low_and_high_for_every_image(tmp_path):
     class IdentityRetinex(torch.nn.Module):
         def forward(self, image):
             return image, torch.ones_like(image[:, :1])
@@ -244,7 +244,11 @@ def test_evaluate_saves_every_image_in_multi_image_batch(tmp_path):
         loss_function=loss, save_images=True, global_iter=1,
     )
     assert math.isfinite(metrics['total_loss'])
-    assert len(list((tmp_path / '1').glob('*.png'))) == 8
+    output_dir = tmp_path / '1'
+    assert len(list(output_dir.glob('*_R_low.png'))) == 4
+    assert len(list(output_dir.glob('*_L_low.png'))) == 4
+    assert len(list(output_dir.glob('*_R_high.png'))) == 4
+    assert len(list(output_dir.glob('*_L_high.png'))) == 4
 
 
 def test_nonfinite_loss_never_updates_parameters():

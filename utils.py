@@ -345,7 +345,10 @@ def _forward_loss(model, loss_function, data, device):
     if isinstance(loss_function, PureLowSingleLoss):
         I_low = data.to(device, non_blocking=non_blocking)
         R_low, L_low = model(I_low)
-        return loss_function(R_low, L_low, I_low), I_low, None, R_low, L_low, None
+        return (
+            loss_function(R_low, L_low, I_low),
+            I_low, None, R_low, L_low, None, None,
+        )
 
     I_low, I_high = data
     I_low = I_low.to(device, non_blocking=non_blocking)
@@ -363,7 +366,7 @@ def _forward_loss(model, loss_function, data, device):
     output = loss_function(
         R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high
     )
-    return output, I_low, I_high, R_low, L_low, R_high
+    return output, I_low, I_high, R_low, L_low, R_high, L_high
 
 
 def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, loss_cfg=None):
@@ -386,7 +389,7 @@ def train_step(model, optimizer, loss_function, data, device, lr_scheduler):
     """单步训练：在参数更新前拦截非有限 loss/gradient。"""
     model.train()
     optimizer.zero_grad(set_to_none=True)
-    output, I_low, _, _, _, _ = _forward_loss(model, loss_function, data, device)
+    output, I_low, _, _, _, _, _ = _forward_loss(model, loss_function, data, device)
     loss = output['total_loss']
 
     if not torch.isfinite(loss):
@@ -446,7 +449,7 @@ def evaluate(model, data_loader, device, lr, filefold_path,
     )
     with torch.no_grad():
         for step, data in enumerate(data_loader):
-            output, I_low, I_high, R_low, L_low, R_high = _forward_loss(
+            output, I_low, I_high, R_low, L_low, R_high, L_high = _forward_loss(
                 model, loss_function, data, device
             )
 
@@ -463,6 +466,19 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                              f"{image_index}_R_low")
                     save_pic(tensor2numpy_L(illumination), evalfold_path,
                              f"{image_index}_L_low")
+
+                    # 只有 paired 验证集中的 high 与 low 是同一场景，才保存
+                    # high 分解用于逐样本对照。unpaired/pure-low 模式不保存 high。
+                    if isinstance(loss_function, PairedLoss):
+                        high_illumination = L_high[batch_index]
+                        if high_illumination.shape[-2:] != R_high.shape[-2:]:
+                            high_illumination = high_illumination.expand(
+                                1, R_high.shape[-2], R_high.shape[-1]
+                            )
+                        save_pic(tensor2numpy_R(R_high[batch_index]), evalfold_path,
+                                 f"{image_index}_R_high")
+                        save_pic(tensor2numpy_L(high_illumination), evalfold_path,
+                                 f"{image_index}_L_high")
                     save_count += 1
 
             # PSNR 仅 paired 模式有意义：比较同一场景的 R_low vs R_high（反射分量应一致）
