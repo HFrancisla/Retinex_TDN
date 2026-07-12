@@ -71,6 +71,7 @@ def test_anchor_version_is_switchable_from_loss_config(mode, version):
     }
     if mode.endswith('_pixel'):
         config['smooth_weight'] = 0.1
+        config['smooth_version'] = 'v1'
     loss = _build_loss_function(config)
     assert loss.anchor_version == version
 
@@ -89,6 +90,7 @@ def test_anchor_version_must_be_explicitly_declared(mode):
         'anchor_weight': 0.05,
         'bdsp_weight': 0.05,
         'smooth_weight': 0.1,
+        'smooth_version': 'v1',
         'self_recon_weight': 0.05,
         'reflect_weight': 0.1,
     }
@@ -115,6 +117,61 @@ def test_paired_loss_does_not_accept_anchor_version():
         _build_loss_function(config)
 
 
+@pytest.mark.parametrize(
+    'mode',
+    ['paired_pixel', 'unpaired_pixel', 'pure_low_double_pixel', 'pure_low_single_pixel'],
+)
+def test_smooth_version_must_be_explicitly_declared_for_pixel_modes(mode):
+    from utils import _VALID_LOSS_FIELDS
+
+    values = {
+        'recon_weight_high': 1.0,
+        'recon_weight_low': 0.3,
+        'cross_recon_weight_low': 0.001,
+        'cross_recon_weight_high': 0.001,
+        'equal_r_weight': 0.1,
+        'recon_weight': 1.0,
+        'anchor_weight': 0.05,
+        'anchor_version': 'v2',
+        'bdsp_weight': 0.05,
+        'smooth_weight': 0.1,
+        'self_recon_weight': 0.05,
+        'reflect_weight': 0.1,
+    }
+    config = {'mode': mode}
+    config.update({key: values[key] for key in _VALID_LOSS_FIELDS[mode]
+                   if key != 'smooth_version'})
+    with pytest.raises(ValueError, match='smooth_version'):
+        _build_loss_function(config)
+
+
+@pytest.mark.parametrize(
+    'mode',
+    ['paired_point', 'unpaired_point', 'pure_low_double_point', 'pure_low_single_point'],
+)
+def test_point_modes_reject_smooth_version(mode):
+    from utils import _VALID_LOSS_FIELDS
+
+    values = {
+        'recon_weight_high': 1.0,
+        'recon_weight_low': 0.3,
+        'cross_recon_weight_low': 0.001,
+        'cross_recon_weight_high': 0.001,
+        'equal_r_weight': 0.1,
+        'recon_weight': 1.0,
+        'anchor_weight': 0.05,
+        'anchor_version': 'v2',
+        'bdsp_weight': 0.05,
+        'self_recon_weight': 0.05,
+        'reflect_weight': 0.1,
+    }
+    config = {'mode': mode}
+    config.update({key: values[key] for key in _VALID_LOSS_FIELDS[mode]})
+    config['smooth_version'] = 'v1'
+    with pytest.raises(ValueError, match='不支持'):
+        _build_loss_function(config)
+
+
 def test_bdsp_is_independent_of_other_batch_samples():
     torch.manual_seed(0)
     images = torch.rand(2, 3, 12, 10)
@@ -123,12 +180,102 @@ def test_bdsp_is_independent_of_other_batch_samples():
     assert torch.allclose(together[1], BDSP_Face(images[1:])[0], atol=1e-6)
 
 
-def test_smooth_loss_does_not_backpropagate_into_reflectance():
+@pytest.mark.parametrize('version', ['v2', 'v3'])
+def test_detached_smooth_versions_do_not_backpropagate_into_reflectance(version):
     illumination = torch.rand(1, 1, 8, 8, requires_grad=True)
     reflectance = torch.rand(1, 3, 8, 8, requires_grad=True)
-    _retinex_smooth(illumination, reflectance).backward()
+    _retinex_smooth(illumination, reflectance, version).backward()
     assert illumination.grad is not None
     assert reflectance.grad is None
+
+
+def test_raw_smooth_version_backpropagates_into_reflectance():
+    illumination = torch.rand(1, 1, 8, 8, requires_grad=True)
+    reflectance = torch.rand(1, 3, 8, 8, requires_grad=True)
+    _retinex_smooth(illumination, reflectance, 'v1').backward()
+    assert illumination.grad is not None
+    assert reflectance.grad is not None
+    assert torch.isfinite(reflectance.grad).all()
+
+
+def test_smooth_versions_have_expected_constant_boundary_behavior():
+    illumination = torch.full((1, 1, 8, 8), 0.5)
+    reflectance = torch.full((1, 3, 8, 8), 0.5)
+    assert _retinex_smooth(illumination, reflectance, 'v1').item() > 0
+    assert _retinex_smooth(illumination, reflectance, 'v2').item() == pytest.approx(0.0)
+    assert _retinex_smooth(illumination, reflectance, 'v3').item() == pytest.approx(0.0)
+
+
+def test_smooth_rejects_unknown_version():
+    with pytest.raises(ValueError, match='smooth_version'):
+        _retinex_smooth(torch.rand(1, 1, 8, 8), torch.rand(1, 3, 8, 8), 'unknown')
+
+
+def test_smooth_v1_matches_raw_reference_formula():
+    torch.manual_seed(11)
+    illumination = torch.rand(2, 1, 7, 9)
+    reflectance = torch.rand(2, 3, 7, 9)
+    gray = (0.299 * reflectance[:, 0:1] + 0.587 * reflectance[:, 1:2]
+            + 0.114 * reflectance[:, 2:3])
+    kx = illumination.new_tensor([[0, 0], [-1, 1]]).view(1, 1, 2, 2)
+    ky = kx.permute(0, 1, 3, 2)
+
+    def gradient(tensor, kernel):
+        return torch.nn.functional.conv2d(tensor, kernel, padding=1).abs()
+
+    guide_x = torch.nn.functional.avg_pool2d(
+        gradient(gray, kx), kernel_size=3, stride=1, padding=1
+    )
+    guide_y = torch.nn.functional.avg_pool2d(
+        gradient(gray, ky), kernel_size=3, stride=1, padding=1
+    )
+    expected = torch.mean(
+        gradient(illumination, kx) * torch.exp(-10 * guide_x)
+        + gradient(illumination, ky) * torch.exp(-10 * guide_y)
+    )
+    assert torch.allclose(_retinex_smooth(illumination, reflectance, 'v1'), expected)
+
+
+@pytest.mark.parametrize('version,use_average', [('v2', False), ('v3', True)])
+def test_smooth_v2_v3_match_finite_difference_reference(version, use_average):
+    torch.manual_seed(12)
+    illumination = torch.rand(2, 1, 7, 9)
+    reflectance = torch.rand(2, 3, 7, 9)
+    gray = (0.299 * reflectance[:, 0:1] + 0.587 * reflectance[:, 1:2]
+            + 0.114 * reflectance[:, 2:3])
+
+    def average(gradient):
+        if not use_average:
+            return gradient
+        return torch.nn.functional.avg_pool2d(
+            torch.nn.functional.pad(gradient, (1, 1, 1, 1), mode='replicate'),
+            kernel_size=3, stride=1,
+        )
+
+    grad_l_x = (illumination[:, :, :, 1:] - illumination[:, :, :, :-1]).abs()
+    grad_l_y = (illumination[:, :, 1:, :] - illumination[:, :, :-1, :]).abs()
+    grad_r_x = (gray[:, :, :, 1:] - gray[:, :, :, :-1]).abs()
+    grad_r_y = (gray[:, :, 1:, :] - gray[:, :, :-1, :]).abs()
+    expected = (
+        (grad_l_x * torch.exp(-10 * average(grad_r_x))).mean()
+        + (grad_l_y * torch.exp(-10 * average(grad_r_y))).mean()
+    )
+    assert torch.allclose(_retinex_smooth(illumination, reflectance, version), expected)
+
+
+@pytest.mark.parametrize('version', ['v1', 'v2', 'v3'])
+def test_smooth_version_is_switchable_from_pixel_loss_config(version):
+    config = {
+        'mode': 'pure_low_single_pixel',
+        'recon_weight': 1.0,
+        'anchor_weight': 0.05,
+        'anchor_version': 'v2',
+        'bdsp_weight': 0.05,
+        'smooth_weight': 0.1,
+        'smooth_version': version,
+    }
+    loss = _build_loss_function(config)
+    assert loss.smooth_version == version
 
 
 def test_loss_output_exposes_all_weighted_components():
@@ -226,7 +373,7 @@ def test_point_model_returns_scalar_illumination():
     assert illumination.shape == (2, 1, 1, 1)
 
 
-def test_evaluate_saves_every_image_in_multi_image_batch(tmp_path):
+def test_paired_evaluate_saves_low_and_high_for_every_image(tmp_path):
     class IdentityRetinex(torch.nn.Module):
         def forward(self, image):
             return image, torch.ones_like(image[:, :1])
@@ -244,7 +391,11 @@ def test_evaluate_saves_every_image_in_multi_image_batch(tmp_path):
         loss_function=loss, save_images=True, global_iter=1,
     )
     assert math.isfinite(metrics['total_loss'])
-    assert len(list((tmp_path / '1').glob('*.png'))) == 8
+    output_dir = tmp_path / '1'
+    assert len(list(output_dir.glob('*_R_low.png'))) == 4
+    assert len(list(output_dir.glob('*_L_low.png'))) == 4
+    assert len(list(output_dir.glob('*_R_high.png'))) == 4
+    assert len(list(output_dir.glob('*_L_high.png'))) == 4
 
 
 def test_nonfinite_loss_never_updates_parameters():
@@ -331,3 +482,21 @@ def test_every_anchor_config_filename_and_auto_name_expose_version():
         assert marker in generate_experiment_name(config)
         assert config['experiment']['name'] == path.stem
         assert config['model']['name'] == path.parts[-3]
+
+
+def test_every_pixel_config_filename_and_auto_name_expose_smooth_version():
+    versioned_count = 0
+    for path in Path('configs').rglob('*.yaml'):
+        config = yaml.safe_load(path.read_text(encoding='utf-8'))
+        version = config['loss'].get('smooth_version')
+        if version is None:
+            assert config['loss']['mode'].endswith('_point')
+            continue
+        versioned_count += 1
+        assert version == 'v1'  # 当前全部配置默认复现 Raw
+        marker = f"sm{version}"
+        assert marker in path.name, f'{path} does not contain {marker}'
+        assert marker in generate_experiment_name(config)
+        assert config['experiment']['name'] == path.stem
+        assert config['model']['name'] == path.parts[-3]
+    assert versioned_count == 23

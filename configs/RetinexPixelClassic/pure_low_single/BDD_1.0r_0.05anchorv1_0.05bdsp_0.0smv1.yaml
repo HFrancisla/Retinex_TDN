@@ -1,21 +1,20 @@
-# RetinexPixelTransMinus — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
+# RetinexPixelClassic — BDD100k pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0sm"
+  name: "BDD_1.0r_0.05anchorv1_0.05bdsp_0.0smv1"
   auto_name: true
 
 data:
-  path: "datasets/LOLv2"
+  path: "/home/ipr4090/2024_hzf/Datasets/BDDnight"
   mode: "pure_low_single"
-  crop_size: 384
-  batch_size: 8
+  crop_size: 512
+  batch_size: 4
   val_batch_size: 4
   num_workers: 4
 
 model:
-  name: "RetinexPixelTransMinus"
+  name: "RetinexPixelClassic"
   dim: 24
-  l_heads: 1
-  l_ffn_expansion: 2.66
+  l_channel: 32
   use_dp: false
   gpu_id: "0"
 
@@ -35,9 +34,10 @@ loss:
   mode: "pure_low_single_pixel"
   recon_weight: 1.0
   anchor_weight: 0.05
-  anchor_version: "v2"
+  anchor_version: "v1"
   bdsp_weight: 0.05
   smooth_weight: 0.0
+  smooth_version: "v1"
 
 resume:
   checkpoint: ""

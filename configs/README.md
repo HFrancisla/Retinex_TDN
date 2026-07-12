@@ -62,6 +62,25 @@ configs/
 - **training 超参**：所有配置统一 `max_iterations=10000`、`lr=1e-4`、`warmup=1000`
 - **验证频率**：每 `500` step 验证一次，验证 batch size 固定为 `4`
 
+### Smooth 版本
+
+所有 Pixel loss（包括 `smooth_weight: 0.0`）必须显式配置：
+
+```yaml
+loss:
+  smooth_weight: 0.1
+  smooth_version: "v1"  # v1=Raw, v2=Current, v3=Compromise
+```
+
+| 版本 | 梯度与边界 | R 梯度平均 | R 是否 detach |
+|---|---|---|---|
+| `v1` | 2×2 Conv + 零填充 | 3×3 AvgPool | 否 |
+| `v2` | 真实相邻差分 | 无 | 是 |
+| `v3` | 真实相邻差分 | 3×3 replicate 平均 | 是 |
+
+版本号紧跟 smooth 权重写入配置文件名和自动实验名，例如 `0.1smv1`。当前所有
+Pixel 配置默认使用 `v1`；Point loss 不接受 `smooth_version`。
+
 ### Anchor 版本
 
 所有包含 anchor 的 loss 必须显式配置：
