@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-scripts/smoke_test.py — 冒烟测试：每个类别跑 5 个 training step，验证模型/损失/数据能正确对接。
+_train/smoke_test.py — 冒烟测试：每个类别跑 5 个 training step，验证模型/损失/数据能正确对接。
 
 每次测试用独立子进程运行 train.py，并自动从原数据集建 symlink 轻量子集（只取前 20 张图），
 避免全量 DataLoader 初始化开销和超时导致的 GPU 残留。
 
 用法:
-    .venv/bin/python scripts/smoke_test.py                  # 全部子集
-    .venv/bin/python scripts/smoke_test.py --subset lolv2_paired
-    .venv/bin/python scripts/smoke_test.py --list           # 列出可用子集
+    .venv/bin/python _train/smoke_test.py                  # 全部子集
+    .venv/bin/python _train/smoke_test.py --subset lolv2_paired
+    .venv/bin/python _train/smoke_test.py --list           # 列出可用子集
 退出码 0 = 全部通过，非 0 = 有失败。
 """
 
 import os, sys, yaml, subprocess, tempfile, shutil, argparse
+from pathlib import Path
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT_DIR)
@@ -21,7 +22,7 @@ TRAIN_SCRIPT = os.path.join(ROOT_DIR, "train.py")
 
 SMOKE_STEPS = 5
 SMOKE_MAX_IMAGES = 20   # 每 split 只取前 N 张图
-SMOKE_TIMEOUT = 120
+SMOKE_TIMEOUT = 180
 
 # ── 按批次定义的冒烟子集 ──────────────────────────────────────────────
 SMOKE_SUBSETS = {
@@ -29,25 +30,25 @@ SMOKE_SUBSETS = {
         ("paired_point",
          "configs/RetinexPointRaw/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq.yaml"),
         ("paired_pixel",
-         "configs/RetinexPixelClassic/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1sm.yaml"),
+         "configs/RetinexPixelClassic/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml"),
     ],
     "lolv2_pure_single": [
         ("pure_low_single_point",
          "configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml"),
         ("pure_low_single_pixel",
-         "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1sm.yaml"),
+         "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
         ("pure_low_single_pixel_minus",
-         "configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0sm.yaml"),
+         "configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"),
     ],
     "lolv2_ablation": [
         ("ablation_lolv2",
-         "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1sm.yaml"),
+         "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
     ],
     "bdd": [
         ("BDD_pure_single_point",
          "configs/RetinexPointRaw/pure_low_single/BDD_1.0r_0.05anchorv2_0.05bdsp.yaml"),
         ("BDD_pure_single_pixel",
-         "configs/RetinexPixelTrans/pure_low_single/BDD_1.0r_0.05anchorv2_0.05bdsp_0.1sm.yaml"),
+         "configs/RetinexPixelTrans/pure_low_single/BDD_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
     ],
 }
 
@@ -96,9 +97,27 @@ def _build_smoke_subset(src_root, max_images, tmpdir):
     return subset_root
 
 
+def _cleanup_smoke_experiments():
+    """删除所有冒烟测试产生的实验目录。
+
+    实验目录结构: experiments/<model>/<data_mode>/_smoke_test__<timestamp>/
+    使用 rglob 搜索，避免硬编码嵌套层数。
+    """
+    smoke_exp = Path(ROOT_DIR) / "experiments"
+    if not smoke_exp.is_dir():
+        return
+    removed = 0
+    for exp_dir in smoke_exp.rglob("*_smoke_*"):
+        if exp_dir.is_dir():
+            shutil.rmtree(str(exp_dir), ignore_errors=True)
+            removed += 1
+    if removed:
+        print(f"  🧹 Cleaned up {removed} smoke experiment dir(s)")
+
+
 # ── 单测试执行 ──────────────────────────────────────────────────────
 
-def smoke_one(label, config_path):
+def smoke_one(label, config_path, keep=False):
     """覆盖 config → 建数据子集 → Popen 跑 train.py → 清理。"""
     from utils import load_config
     config_abs = os.path.join(ROOT_DIR, config_path)
@@ -128,16 +147,22 @@ def smoke_one(label, config_path):
         yaml.dump(cfg, f)
 
     # ── 执行 ──
+    # 注意: stdout 不捕获到 PIPE，避免管道缓冲区满导致子进程阻塞
+    # （DWT-FSA Transformer 在 512 crop 下单步 log 输出较长）
     proc = None
+    stderr_file = os.path.join(tmpdir, "stderr.log")
     try:
-        proc = subprocess.Popen(
-            [PYTHON, TRAIN_SCRIPT, "--config", tmp_config],
-            cwd=ROOT_DIR,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        )
-        stdout, stderr = proc.communicate(timeout=SMOKE_TIMEOUT)
+        with open(stderr_file, "w") as err_f:
+            proc = subprocess.Popen(
+                [PYTHON, TRAIN_SCRIPT, "--config", tmp_config],
+                cwd=ROOT_DIR,
+                stdout=subprocess.DEVNULL, stderr=err_f, text=True,
+            )
+            proc.communicate(timeout=SMOKE_TIMEOUT)
         if proc.returncode != 0:
-            for line in stderr.strip().split("\n")[-15:]:
+            with open(stderr_file) as f:
+                stderr_text = f.read()
+            for line in stderr_text.strip().split("\n")[-15:]:
                 print(f"      {line}")
             return False
         return True
@@ -165,15 +190,8 @@ def smoke_one(label, config_path):
         raise
 
     finally:
-        # 清理临时数据和实验产物
-        smoke_exp = os.path.join(ROOT_DIR, "experiments")
-        if os.path.isdir(smoke_exp):
-            for sub in os.listdir(smoke_exp):
-                subp = os.path.join(smoke_exp, sub)
-                if os.path.isdir(subp):
-                    for sub2 in os.listdir(subp):
-                        if "_smoke_test_" in sub2:
-                            shutil.rmtree(os.path.join(subp, sub2), ignore_errors=True)
+        if not keep:
+            _cleanup_smoke_experiments()
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
@@ -193,6 +211,8 @@ def main():
                         help="Run only a specific subset (default: all)")
     parser.add_argument("--list", action="store_true",
                         help="List available subsets and exit")
+    parser.add_argument("--keep", action="store_true",
+                        help="Keep smoke experiment directories after test (for debugging)")
     args = parser.parse_args()
 
     if args.list:
@@ -222,7 +242,7 @@ def main():
     try:
         for label, config_path in test_cases:
             print(f"  [{label}] ", end="", flush=True)
-            ok = smoke_one(label, config_path)
+            ok = smoke_one(label, config_path, keep=args.keep)
             if ok:
                 print("✅")
             else:
@@ -232,6 +252,10 @@ def main():
         print("\n\n  ⚠  Interrupted by user. If WSL becomes unresponsive:")
         print("       wsl --shutdown   (from Windows PowerShell)")
         return 130
+    finally:
+        # 安全网清理：确保所有冒烟实验目录都被删除（即使 finally 未执行）
+        if not args.keep:
+            _cleanup_smoke_experiments()
 
     print(f"\n  Result: {total - failed}/{total} passed, {failed} failed\n")
     return 0 if failed == 0 else 1

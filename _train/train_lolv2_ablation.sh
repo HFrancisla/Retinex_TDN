@@ -10,8 +10,8 @@
 #   D (推荐优先) : recon=0.3  smooth=0.5
 #
 # 用法:
-#   bash scripts/train_lolv2_ablation.sh                # 直接训练（默认）
-    #   bash #   bash scripts/train_lolv2_ablation.sh --validate     # 仅预检: 配置验证 + 冒烟测试（不训练） --validate     # 仅预检: 配置验证 + 冒烟测试
+#   bash _train/train_lolv2_ablation.sh                # 直接训练（默认）
+#   bash _train/train_lolv2_ablation.sh --validate     # 仅预检: 配置验证 + 冒烟测试
 # =============================================================================
 
 set -euo pipefail
@@ -19,7 +19,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${ROOT_DIR}/.venv/bin/python"
 TRAIN_SCRIPT="${ROOT_DIR}/train.py"
-SMOKE_SCRIPT="${ROOT_DIR}/scripts/smoke_test.py"
+SMOKE_SCRIPT="${ROOT_DIR}/_train/smoke_test.py"
 
 LOG_DIR="${ROOT_DIR}/_tmp"
 mkdir -p "${LOG_DIR}"
@@ -65,10 +65,10 @@ from utils import load_config
 import os, sys
 
 configs = [
-    ('RetinexPixelTrans | ablation A (r=1.0 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1sm.yaml'),
-    ('RetinexPixelTrans | ablation B (r=1.0 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5sm.yaml'),
-    ('RetinexPixelTrans | ablation C (r=0.3 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1sm.yaml'),
-    ('RetinexPixelTrans | ablation D (r=0.3 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5sm.yaml'),
+    ('RetinexPixelTrans | ablation A (r=1.0 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
+    ('RetinexPixelTrans | ablation B (r=1.0 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml'),
+    ('RetinexPixelTrans | ablation C (r=0.3 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
+    ('RetinexPixelTrans | ablation D (r=0.3 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml'),
 ]
 
 ok = 0
@@ -158,13 +158,13 @@ echo "  █  recon_weight ∈ {1.0, 0.3}  ✕  smooth_weight ∈ {0.1, 0.5}"
 echo "  ████████████████████████████████████████████████████████████████████████"
 
 run_exp "消融 A (基线)     | LOLv2 recon=1.0 smooth=0.1" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1sm.yaml"
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
 run_exp "消融 B (强平滑)   | LOLv2 recon=1.0 smooth=0.5" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5sm.yaml"
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml"
 run_exp "消融 C (弱重建)   | LOLv2 recon=0.3 smooth=0.1" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1sm.yaml"
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
 run_exp "消融 D (推荐优先) | LOLv2 recon=0.3 smooth=0.5" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5sm.yaml"
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml"
 
 # =============================================================================
 #  汇总

@@ -1,6 +1,6 @@
 # RetinexPixelTrans — LOLv2 paired | smooth_weight=0.3 (基线 0.1 的 3×)
 experiment:
-  name: "LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.3sm"
+  name: "LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.3smv1"
   auto_name: true
 
 data:
@@ -38,6 +38,7 @@ loss:
   cross_recon_weight_low: 0.001
   cross_recon_weight_high: 0.001
   smooth_weight: 0.3
+  smooth_version: "v1"
   equal_r_weight: 0.1
 
 resume:

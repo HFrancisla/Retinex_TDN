@@ -499,4 +499,4 @@ def test_every_pixel_config_filename_and_auto_name_expose_smooth_version():
         assert marker in generate_experiment_name(config)
         assert config['experiment']['name'] == path.stem
         assert config['model']['name'] == path.parts[-3]
-    assert versioned_count == 23
+    assert versioned_count == 25
