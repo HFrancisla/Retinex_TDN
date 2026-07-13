@@ -278,7 +278,7 @@ def test_smooth_version_is_switchable_from_pixel_loss_config(version):
     assert loss.smooth_version == version
 
 
-def test_loss_output_exposes_all_weighted_components():
+def test_loss_output_exposes_only_enabled_weighted_components():
     torch.manual_seed(1)
     low = torch.rand(2, 3, 8, 8)
     high = torch.rand(2, 3, 8, 8)
@@ -299,6 +299,103 @@ def test_loss_output_exposes_all_weighted_components():
     assert torch.allclose(output['total_loss'], weighted, atol=1e-6)
     assert output['cross_recon_weighted_loss'].item() > 0
     assert output['equal_r_weighted_loss'].item() > 0
+    assert 'anchor_weighted_loss' not in output
+    assert 'bdsp_weighted_loss' not in output
+    assert 'self_recon_weighted_loss' not in output
+    assert 'reflect_weighted_loss' not in output
+
+
+@pytest.mark.parametrize(
+    ('mode', 'expected_components'),
+    [
+        ('paired_point', {'recon', 'cross_recon', 'equal_r'}),
+        ('paired_pixel', {'recon', 'cross_recon', 'smooth', 'equal_r'}),
+        ('unpaired_point', {'recon', 'anchor', 'bdsp', 'self_recon'}),
+        ('unpaired_pixel', {'recon', 'anchor', 'bdsp', 'smooth', 'self_recon'}),
+        ('pure_low_double_point', {'recon', 'anchor', 'bdsp', 'self_recon', 'reflect'}),
+        ('pure_low_double_pixel', {
+            'recon', 'anchor', 'bdsp', 'smooth', 'self_recon', 'reflect',
+        }),
+        ('pure_low_single_point', {'recon', 'anchor', 'bdsp'}),
+        ('pure_low_single_pixel', {'recon', 'anchor', 'bdsp', 'smooth'}),
+    ],
+)
+def test_every_loss_mode_reports_exactly_its_enabled_components(mode, expected_components):
+    if mode.startswith('paired_'):
+        config = {
+            'mode': mode,
+            'recon_weight_high': 1.0,
+            'recon_weight_low': 0.3,
+            'cross_recon_weight_low': 0.01,
+            'cross_recon_weight_high': 0.02,
+            'equal_r_weight': 0.1,
+        }
+    else:
+        config = {
+            'mode': mode,
+            'recon_weight': 1.0,
+            'anchor_weight': 0.05,
+            'bdsp_weight': 0.05,
+            'anchor_version': 'v2',
+        }
+        if mode.startswith('unpaired_') or mode.startswith('pure_low_double_'):
+            config['self_recon_weight'] = 0.05
+        if mode.startswith('pure_low_double_'):
+            config['reflect_weight'] = 0.1
+    if mode.endswith('_pixel'):
+        config.update(smooth_weight=0.1, smooth_version='v1')
+
+    loss = _build_loss_function(config)
+    image1 = torch.rand(2, 3, 8, 8)
+    image2 = torch.rand(2, 3, 8, 8)
+    reflectance1 = torch.rand_like(image1)
+    reflectance2 = torch.rand_like(image2)
+    illumination_shape = (2, 1, 8, 8) if mode.endswith('_pixel') else (2, 1, 1, 1)
+    illumination1 = torch.rand(illumination_shape)
+    illumination2 = torch.rand(illumination_shape)
+
+    if mode.startswith('pure_low_single_'):
+        output = loss(reflectance1, illumination1, image1)
+    else:
+        output = loss(
+            reflectance1, reflectance2, illumination1, illumination2,
+            image1, image2, illumination1, illumination2,
+        )
+
+    reported_components = {
+        key.removesuffix('_weighted_loss')
+        for key in output
+        if key.endswith('_weighted_loss')
+    }
+    assert reported_components == expected_components
+    assert all(f'{name}_loss' in output for name in expected_components)
+    weighted_total = sum(output[f'{name}_weighted_loss'] for name in expected_components)
+    assert torch.allclose(output['total_loss'], weighted_total, atol=1e-6)
+
+
+def test_zero_weight_loss_components_are_not_reported():
+    image = torch.rand(1, 3, 4, 4)
+    reflectance = torch.rand_like(image)
+    illumination = torch.rand(1, 1, 4, 4)
+    loss = PureLowSingleLoss(
+        l_type='pixel', recon_weight=1.0, anchor_weight=0,
+        bdsp_weight=0, smooth_weight=0,
+    )
+    output = loss(reflectance, illumination, image)
+    assert set(output) == {'total_loss', 'recon_loss', 'recon_weighted_loss'}
+
+    paired = PairedLoss(
+        l_type='point', recon_weight_high=1, recon_weight_low=1,
+        cross_recon_weight_low=0, cross_recon_weight_high=0,
+        equal_r_weight=0,
+    )
+    point_l = torch.rand(1, 1, 1, 1)
+    output = paired(
+        reflectance, reflectance, point_l, point_l, image, image
+    )
+    assert 'cross_recon_loss' not in output
+    assert 'cross_recon_low_loss' not in output
+    assert 'equal_r_loss' not in output
 
 
 def test_all_loss_families_total_equals_weighted_components():

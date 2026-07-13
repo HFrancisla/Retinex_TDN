@@ -193,18 +193,10 @@ def _anchor_loss(L, I, l_type, anchor_version='v2'):
     return _pixel_anchor_loss(L, I, anchor_version)
 
 
-_LOSS_COMPONENTS = (
-    'recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
-    'self_recon', 'equal_r', 'reflect',
-)
-
-
 def _loss_output(total, components, **details):
-    """构造统一损失输出，同时暴露 raw 值和加权后对 total 的贡献。"""
-    zero = total.new_zeros(())
+    """仅输出已启用损失项的 raw 值和对 total 的加权贡献。"""
     output = {'total_loss': total}
-    for name in _LOSS_COMPONENTS:
-        raw, weighted = components.get(name, (zero, zero))
+    for name, (raw, weighted) in components.items():
         output[f'{name}_loss'] = raw
         output[f'{name}_weighted_loss'] = weighted
     output.update(details)
@@ -283,19 +275,34 @@ class PairedLoss(nn.Module):
                            + self.smooth_weight * loss_smooth
                            + self.equal_r_weight * self.equal_R_loss)
 
-        return _loss_output(
-            self.loss_Decom,
-            {
-                'recon': (self.recon_loss_low + self.recon_loss_high, loss_recon),
-                'cross_recon': (self.recon_loss_crs_low + self.recon_loss_crs_high, loss_cross),
-                'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
-                'equal_r': (self.equal_R_loss, self.equal_r_weight * self.equal_R_loss),
-            },
-            recon_low_loss=self.recon_loss_low,
-            recon_high_loss=self.recon_loss_high,
-            cross_recon_low_loss=self.recon_loss_crs_low,
-            cross_recon_high_loss=self.recon_loss_crs_high,
-        )
+        components = {}
+        if self.recon_weight_high > 0 or self.recon_weight_low > 0:
+            components['recon'] = (
+                self.recon_loss_low + self.recon_loss_high, loss_recon
+            )
+        if self.cross_recon_weight_low > 0 or self.cross_recon_weight_high > 0:
+            components['cross_recon'] = (
+                self.recon_loss_crs_low + self.recon_loss_crs_high, loss_cross
+            )
+        if self.smooth_weight > 0:
+            components['smooth'] = (loss_smooth, self.smooth_weight * loss_smooth)
+        if self.equal_r_weight > 0:
+            components['equal_r'] = (
+                self.equal_R_loss, self.equal_r_weight * self.equal_R_loss
+            )
+
+        details = {}
+        if self.recon_weight_high > 0 or self.recon_weight_low > 0:
+            details.update(
+                recon_low_loss=self.recon_loss_low,
+                recon_high_loss=self.recon_loss_high,
+            )
+        if self.cross_recon_weight_low > 0 or self.cross_recon_weight_high > 0:
+            details.update(
+                cross_recon_low_loss=self.recon_loss_crs_low,
+                cross_recon_high_loss=self.recon_loss_crs_high,
+            )
+        return _loss_output(self.loss_Decom, components, **details)
 
 
 # ============================== UnpairedLoss ================================
@@ -375,13 +382,20 @@ class UnpairedLoss(nn.Module):
             + self.smooth_weight * loss_smooth
         )
 
-        return _loss_output(self.loss_Decom, {
-            'recon': (loss_recon, self.recon_weight * loss_recon),
-            'anchor': (loss_anchor, self.anchor_weight * loss_anchor),
-            'bdsp': (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss),
-            'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
-            'self_recon': (self.self_recon_loss, self.self_recon_weight * self.self_recon_loss),
-        })
+        components = {}
+        if self.recon_weight > 0:
+            components['recon'] = (loss_recon, self.recon_weight * loss_recon)
+        if self.anchor_weight > 0:
+            components['anchor'] = (loss_anchor, self.anchor_weight * loss_anchor)
+        if self.bdsp_weight > 0:
+            components['bdsp'] = (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss)
+        if self.smooth_weight > 0:
+            components['smooth'] = (loss_smooth, self.smooth_weight * loss_smooth)
+        if self.self_recon_weight > 0:
+            components['self_recon'] = (
+                self.self_recon_loss, self.self_recon_weight * self.self_recon_loss
+            )
+        return _loss_output(self.loss_Decom, components)
 
 
 # ============================== PureLowDoubleLoss ===========================
@@ -461,14 +475,24 @@ class PureLowDoubleLoss(nn.Module):
             + self.smooth_weight * loss_smooth
         )
 
-        return _loss_output(self.loss_Decom, {
-            'recon': (loss_recon, self.recon_weight * loss_recon),
-            'anchor': (loss_anchor, self.anchor_weight * loss_anchor),
-            'bdsp': (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss),
-            'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
-            'self_recon': (self.self_recon_loss, self.self_recon_weight * self.self_recon_loss),
-            'reflect': (self.reflect_loss, self.reflect_weight * self.reflect_loss),
-        })
+        components = {}
+        if self.recon_weight > 0:
+            components['recon'] = (loss_recon, self.recon_weight * loss_recon)
+        if self.anchor_weight > 0:
+            components['anchor'] = (loss_anchor, self.anchor_weight * loss_anchor)
+        if self.bdsp_weight > 0:
+            components['bdsp'] = (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss)
+        if self.smooth_weight > 0:
+            components['smooth'] = (loss_smooth, self.smooth_weight * loss_smooth)
+        if self.self_recon_weight > 0:
+            components['self_recon'] = (
+                self.self_recon_loss, self.self_recon_weight * self.self_recon_loss
+            )
+        if self.reflect_weight > 0:
+            components['reflect'] = (
+                self.reflect_loss, self.reflect_weight * self.reflect_loss
+            )
+        return _loss_output(self.loss_Decom, components)
 
 
 # ============================== PureLowSingleLoss ===========================
@@ -523,9 +547,13 @@ class PureLowSingleLoss(nn.Module):
             + self.smooth_weight * loss_smooth
         )
 
-        return _loss_output(self.loss_Decom, {
-            'recon': (loss_recon, self.recon_weight * loss_recon),
-            'anchor': (loss_anchor, self.anchor_weight * loss_anchor),
-            'bdsp': (loss_bdsp, self.bdsp_weight * loss_bdsp),
-            'smooth': (loss_smooth, self.smooth_weight * loss_smooth),
-        })
+        components = {}
+        if self.recon_weight > 0:
+            components['recon'] = (loss_recon, self.recon_weight * loss_recon)
+        if self.anchor_weight > 0:
+            components['anchor'] = (loss_anchor, self.anchor_weight * loss_anchor)
+        if self.bdsp_weight > 0:
+            components['bdsp'] = (loss_bdsp, self.bdsp_weight * loss_bdsp)
+        if self.smooth_weight > 0:
+            components['smooth'] = (loss_smooth, self.smooth_weight * loss_smooth)
+        return _loss_output(self.loss_Decom, components)

@@ -142,6 +142,12 @@ def generate_experiment_name(cfg):
     return "_".join([dataset, mode] + parts)
 
 
+_WEIGHTED_LOSS_LOG_ORDER = (
+    'recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
+    'self_recon', 'equal_r', 'reflect',
+)
+
+
 def validate_pipeline_config(cfg):
     """校验 data/loss/model 三者语义及关键训练参数。"""
     data_cfg = cfg.get('data', {})
@@ -658,6 +664,15 @@ def main(args):
             return f"{v:.2e}"
         return f"{v:.4f}"
 
+    def _weighted_loss_summary(metrics):
+        """将当前启用的加权损失紧凑地展示在同一分组中。"""
+        values = [f"total: {metrics['total_loss']:.4f}"]
+        for name in _WEIGHTED_LOSS_LOG_ORDER:
+            key = f'{name}_weighted_loss'
+            if key in metrics:
+                values.append(f'{name}: {_fmt(metrics[key])}')
+        return 'Loss(weighted): ' + ', '.join(values)
+
     def _start_epoch_iterator(epoch_index, skip_batches=0):
         """每个 epoch 使用独立确定性种子；resume 时重放至准确 batch 游标。"""
         epoch_seed = seed + epoch_index
@@ -738,12 +753,7 @@ def main(args):
         if val_psnr is not None:
             tb_writer.add_scalar('val/psnr', val_psnr, step)
 
-        parts = [f"total: {val_metrics['total_loss']:.4f}"]
-        for name in ('recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
-                     'self_recon', 'equal_r', 'reflect'):
-            key = f'{name}_weighted_loss'
-            if key in val_metrics:
-                parts.append(f'{name}(weighted): {_fmt(val_metrics[key])}')
+        parts = [_weighted_loss_summary(val_metrics)]
         if val_psnr is not None:
             parts.append(f'PSNR(proxy): {val_psnr:.2f}dB')
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -798,13 +808,7 @@ def main(args):
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             avg = _averages(log_accum, log_sample_count)
             current_epoch = global_iter // iterations_per_epoch + 1  # 1-indexed
-            parts = [f"ep:{current_epoch}",
-                     f"total: {avg['total_loss']:.4f}"]
-            for name in ('recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
-                         'self_recon', 'equal_r', 'reflect'):
-                key = f'{name}_weighted_loss'
-                if key in avg:
-                    parts.append(f'{name}(weighted): {_fmt(avg[key])}')
+            parts = [f"ep:{current_epoch}", _weighted_loss_summary(avg)]
             parts.append(f"lr: {lr:.6f}")
             # 速度和 ETA
             elapsed = time.perf_counter() - train_start
