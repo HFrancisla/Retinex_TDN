@@ -78,19 +78,21 @@ _VALID_LOSS_FIELDS = {
     },
     'unpaired_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'self_recon_weight', 'anchor_version',
+        'redecomp_l_consistency_weight', 'anchor_version',
     },
     'unpaired_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'smooth_version', 'self_recon_weight', 'anchor_version',
+        'smooth_weight', 'smooth_version', 'redecomp_l_consistency_weight',
+        'anchor_version',
     },
     'pure_low_double_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'self_recon_weight', 'reflect_weight', 'anchor_version',
+        'redecomp_l_consistency_weight', 'reflect_weight', 'anchor_version',
     },
     'pure_low_double_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
-        'smooth_weight', 'smooth_version', 'self_recon_weight', 'reflect_weight', 'anchor_version',
+        'smooth_weight', 'smooth_version', 'redecomp_l_consistency_weight',
+        'reflect_weight', 'anchor_version',
     },
     'pure_low_single_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight', 'anchor_version',
@@ -357,15 +359,16 @@ def _forward_loss(model, loss_function, data, device):
     R_low, L_low = model(I_low)
     R_high, L_high = model(I_high)
 
-    if loss_function.self_recon_weight > 0:
-        _, L_R_low = model(R_low)
-        _, L_R_high = model(R_high)
+    if loss_function.redecomp_l_consistency_weight > 0:
+        _, L_redecomp_low = model(R_low)
+        _, L_redecomp_high = model(R_high)
     else:
-        L_R_low = None
-        L_R_high = None
+        L_redecomp_low = None
+        L_redecomp_high = None
 
     output = loss_function(
-        R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high
+        R_low, R_high, L_low, L_high, I_low, I_high,
+        L_redecomp_low, L_redecomp_high,
     )
     return output, I_low, I_high, R_low, L_low, R_high, L_high
 

@@ -452,7 +452,7 @@
       <div class="panel-head">
         <div>
           <h2>UnpairedLoss：非配对 low/high 分解损失</h2>
-          <p class="small">没有同场景配对关系，所以不使用交叉重建和 equal_R；改用重建、anchor、BDSP 和 self recon。</p>
+          <p class="small">没有同场景配对关系，所以不使用交叉重建和 equal_R；改用重建、anchor、BDSP 和 R 二次分解 L 一致性。</p>
         </div>
         <div class="mode-toggle" data-toggle-for="unpaired" aria-label="UnpairedLoss point pixel 切换">
           <button type="button" class="active" data-variant="point">Point</button>
@@ -490,10 +490,11 @@
                 <td>让 R 的边缘响应贴近输入图，保留轮廓和局部结构，避免反射分量过度平滑或丢边。</td>
               </tr>
               <tr>
-                <td>Self recon</td>
-                <td><code>self_recon_weight = 0.05</code></td>
-                <td><pre class="formula">L1(L_R_low, L_R_high)</pre></td>
-                <td>将反射图再次分解得到二次 L，并约束 low/high 的二次光照一致，减少非配对样本间的分解漂移。</td>
+                <td>R 二次分解 L 一致性</td>
+                <td><code>redecomp_l_consistency_weight = 0.05</code></td>
+                <td><pre class="formula">L1(mean_hw(L_redecomp_low),
+   mean_hw(L_redecomp_high))</pre></td>
+                <td>将反射图再次分解得到二次 L；由于 low/high 不配对，只约束每个样本的二次 L 全局均值一致。</td>
               </tr>
               <tr class="note-row">
                 <td colspan="4">符号注释：<code>rep3(L)=cat(L,L,L)</code>，表示把单通道光照复制成 3 通道；<code>max_c(I)</code> 表示 RGB 通道最大值图。</td>
@@ -533,10 +534,11 @@
                 <td>让 R 的边缘响应贴近输入图，保留轮廓和局部结构，避免反射分量过度平滑或丢边。</td>
               </tr>
               <tr>
-                <td>Self recon</td>
-                <td><code>self_recon_weight = 0.05</code></td>
-                <td><pre class="formula">L1(L_R_low, L_R_high)</pre></td>
-                <td>将反射图再次分解得到二次 L，并约束 low/high 的二次光照一致，减少非配对样本间的分解漂移。</td>
+                <td>R 二次分解 L 一致性</td>
+                <td><code>redecomp_l_consistency_weight = 0.05</code></td>
+                <td><pre class="formula">L1(mean_hw(L_redecomp_low),
+   mean_hw(L_redecomp_high))</pre></td>
+                <td>将反射图再次分解得到二次 L；由于 low/high 不配对，只约束每个样本的二次 L 全局均值一致。</td>
               </tr>
               <tr>
                 <td>Retinex smooth</td>
@@ -595,9 +597,9 @@
                 <td>让两个 view 的 R 都保留各自输入的边缘结构，使反射分量承载稳定内容而非仅拟合亮度。</td>
               </tr>
               <tr>
-                <td>Self recon</td>
-                <td><code>self_recon_weight = 0.05</code></td>
-                <td><pre class="formula">L1(LR1, LR2)</pre></td>
+                <td>R 二次分解 L 一致性</td>
+                <td><code>redecomp_l_consistency_weight = 0.05</code></td>
+                <td><pre class="formula">L1(L_redecomp_1, L_redecomp_2)</pre></td>
                 <td>对两个 view 的 R 再分解并对齐二次 L，要求同一内容在增强前后得到相近的光照解释。</td>
               </tr>
               <tr>
@@ -644,9 +646,9 @@
                 <td>让两个 view 的 R 都保留各自输入的边缘结构，使反射分量承载稳定内容而非仅拟合亮度。</td>
               </tr>
               <tr>
-                <td>Self recon</td>
-                <td><code>self_recon_weight = 0.05</code></td>
-                <td><pre class="formula">L1(LR1, LR2)</pre></td>
+                <td>R 二次分解 L 一致性</td>
+                <td><code>redecomp_l_consistency_weight = 0.05</code></td>
+                <td><pre class="formula">L1(L_redecomp_1, L_redecomp_2)</pre></td>
                 <td>对两个 view 的 R 再分解并对齐二次 L，要求同一内容在增强前后得到相近的光照解释。</td>
               </tr>
               <tr>

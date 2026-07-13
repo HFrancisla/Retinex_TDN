@@ -91,7 +91,7 @@ def test_anchor_version_must_be_explicitly_declared(mode):
         'bdsp_weight': 0.05,
         'smooth_weight': 0.1,
         'smooth_version': 'v1',
-        'self_recon_weight': 0.05,
+        'redecomp_l_consistency_weight': 0.05,
         'reflect_weight': 0.1,
     }
     from utils import _VALID_LOSS_FIELDS
@@ -135,7 +135,7 @@ def test_smooth_version_must_be_explicitly_declared_for_pixel_modes(mode):
         'anchor_version': 'v2',
         'bdsp_weight': 0.05,
         'smooth_weight': 0.1,
-        'self_recon_weight': 0.05,
+        'redecomp_l_consistency_weight': 0.05,
         'reflect_weight': 0.1,
     }
     config = {'mode': mode}
@@ -162,7 +162,7 @@ def test_point_modes_reject_smooth_version(mode):
         'anchor_weight': 0.05,
         'anchor_version': 'v2',
         'bdsp_weight': 0.05,
-        'self_recon_weight': 0.05,
+        'redecomp_l_consistency_weight': 0.05,
         'reflect_weight': 0.1,
     }
     config = {'mode': mode}
@@ -301,7 +301,7 @@ def test_loss_output_exposes_only_enabled_weighted_components():
     assert output['equal_r_weighted_loss'].item() > 0
     assert 'anchor_weighted_loss' not in output
     assert 'bdsp_weighted_loss' not in output
-    assert 'self_recon_weighted_loss' not in output
+    assert 'redecomp_l_consistency_weighted_loss' not in output
     assert 'reflect_weighted_loss' not in output
 
 
@@ -310,11 +310,18 @@ def test_loss_output_exposes_only_enabled_weighted_components():
     [
         ('paired_point', {'recon', 'cross_recon', 'equal_r'}),
         ('paired_pixel', {'recon', 'cross_recon', 'smooth', 'equal_r'}),
-        ('unpaired_point', {'recon', 'anchor', 'bdsp', 'self_recon'}),
-        ('unpaired_pixel', {'recon', 'anchor', 'bdsp', 'smooth', 'self_recon'}),
-        ('pure_low_double_point', {'recon', 'anchor', 'bdsp', 'self_recon', 'reflect'}),
+        ('unpaired_point', {
+            'recon', 'anchor', 'bdsp', 'redecomp_l_consistency',
+        }),
+        ('unpaired_pixel', {
+            'recon', 'anchor', 'bdsp', 'smooth', 'redecomp_l_consistency',
+        }),
+        ('pure_low_double_point', {
+            'recon', 'anchor', 'bdsp', 'redecomp_l_consistency', 'reflect',
+        }),
         ('pure_low_double_pixel', {
-            'recon', 'anchor', 'bdsp', 'smooth', 'self_recon', 'reflect',
+            'recon', 'anchor', 'bdsp', 'smooth',
+            'redecomp_l_consistency', 'reflect',
         }),
         ('pure_low_single_point', {'recon', 'anchor', 'bdsp'}),
         ('pure_low_single_pixel', {'recon', 'anchor', 'bdsp', 'smooth'}),
@@ -339,7 +346,7 @@ def test_every_loss_mode_reports_exactly_its_enabled_components(mode, expected_c
             'anchor_version': 'v2',
         }
         if mode.startswith('unpaired_') or mode.startswith('pure_low_double_'):
-            config['self_recon_weight'] = 0.05
+            config['redecomp_l_consistency_weight'] = 0.05
         if mode.startswith('pure_low_double_'):
             config['reflect_weight'] = 0.1
     if mode.endswith('_pixel'):
@@ -406,15 +413,15 @@ def test_all_loss_families_total_equals_weighted_components():
     r2 = torch.rand_like(image2)
     l1 = torch.rand(2, 1, 8, 8)
     l2 = torch.rand(2, 1, 8, 8)
-    lr1 = torch.rand(2, 1, 8, 8)
-    lr2 = torch.rand(2, 1, 8, 8)
+    l_redecomp_1 = torch.rand(2, 1, 8, 8)
+    l_redecomp_2 = torch.rand(2, 1, 8, 8)
     outputs = [
         PureLowSingleLoss(l_type='pixel', smooth_weight=0.1)(r1, l1, image1),
         UnpairedLoss(l_type='pixel', smooth_weight=0.1)(
-            r1, r2, l1, l2, image1, image2, lr1, lr2
+            r1, r2, l1, l2, image1, image2, l_redecomp_1, l_redecomp_2
         ),
         PureLowDoubleLoss(l_type='pixel', smooth_weight=0.1, reflect_weight=0.2)(
-            r1, r2, l1, l2, image1, image2, lr1, lr2
+            r1, r2, l1, l2, image1, image2, l_redecomp_1, l_redecomp_2
         ),
     ]
     for output in outputs:
@@ -431,7 +438,7 @@ def test_reflect_stop_gradient_has_single_l1_scale():
     l = torch.ones(1, 1, 4, 4)
     loss = PureLowDoubleLoss(
         recon_weight=0, anchor_weight=0, bdsp_weight=0,
-        self_recon_weight=0, reflect_weight=1,
+        redecomp_l_consistency_weight=0, reflect_weight=1,
     )
     output = loss(zeros, ones, l, l, zeros, ones, None, None)
     assert output['reflect_loss'].item() == pytest.approx(1.0)
@@ -530,7 +537,7 @@ def test_pipeline_config_rejects_mode_mismatch():
         'loss': {
             'mode': 'unpaired_point', 'recon_weight': 1,
             'anchor_weight': 0.05, 'bdsp_weight': 0.05,
-            'self_recon_weight': 0.05,
+            'redecomp_l_consistency_weight': 0.05,
         },
     }
     with pytest.raises(ValueError, match='inconsistent'):

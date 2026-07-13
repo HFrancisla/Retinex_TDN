@@ -34,7 +34,7 @@ def loss_short(loss: str) -> str:
     s = re.sub(r"_(\d+\.?\d*)r_",     r" recon=\1_", s)
     s = re.sub(r"_(\d+\.?\d*)anchor", r" anchor=\1", s)
     s = re.sub(r"_(\d+\.?\d*)bdsp",   r" bdsp=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)sr",     r" sr=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rlc",    r" redecompL=\1", s)
     s = re.sub(r"_(\d+\.?\d*)ref",    r" ref=\1", s)
     s = re.sub(r"_(\d+\.?\d*)er",     r" equalR=\1", s)
     s = re.sub(r"_(\d+\.?\d*)sm",     r" sm=\1", s)

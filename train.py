@@ -92,7 +92,7 @@ def generate_experiment_name(cfg):
         ("anchor_weight",             "anchor"),
         ("bdsp_weight",               "bdsp"),
         ("smooth_weight",             "sm"),
-        ("self_recon_weight",         "sr"),
+        ("redecomp_l_consistency_weight", "rlc"),
         ("reflect_weight",            "ref"),
     ]
 
@@ -144,7 +144,7 @@ def generate_experiment_name(cfg):
 
 _WEIGHTED_LOSS_LOG_ORDER = (
     'recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
-    'self_recon', 'equal_r', 'reflect',
+    'redecomp_l_consistency', 'equal_r', 'reflect',
 )
 
 
@@ -278,13 +278,15 @@ def main(args):
             cfg['loss'] = {
                 'mode': 'unpaired_point', 'recon_weight': 1.0,
                 'anchor_weight': 0.05, 'bdsp_weight': 0.05,
-                'self_recon_weight': 0.05, 'anchor_version': 'v2',
+                'redecomp_l_consistency_weight': 0.05,
+                'anchor_version': 'v2',
             }
         elif args.mode == 'pure_low_double':
             cfg['loss'] = {
                 'mode': 'pure_low_double_point', 'recon_weight': 1.0,
                 'anchor_weight': 0.05, 'bdsp_weight': 0.05,
-                'self_recon_weight': 0.05, 'reflect_weight': 0.1,
+                'redecomp_l_consistency_weight': 0.05,
+                'reflect_weight': 0.1,
                 'anchor_version': 'v2',
             }
         else:

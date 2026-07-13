@@ -23,8 +23,8 @@ IMG_PREFIX = "../../"
 def extract_loss_config(run_name: str) -> str:
     """从 run 目录名提取损失配置部分。
 
-    "BDD_below40_point_1r_0.05anchor_0.05bdsp_0.05sr_0.05ref_20260625-013114"
-    → "1r_0.05anchor_0.05bdsp_0.05sr_0.05ref"
+    "BDD_below40_point_1r_0.05anchor_0.05bdsp_0.05rlc_0.05ref_20260625-013114"
+    → "1r_0.05anchor_0.05bdsp_0.05rlc_0.05ref"
     """
     # 去掉末尾时间戳 _YYYYMMDD-HHMMSS
     s = re.sub(r"_\d{8}-\d{6}$", "", run_name)
@@ -52,7 +52,7 @@ def loss_short(loss: str) -> str:
     s = re.sub(r"_(\d+\.?\d*)r_",     r" recon=\1_", s)
     s = re.sub(r"_(\d+\.?\d*)anchor", r" anchor=\1", s)
     s = re.sub(r"_(\d+\.?\d*)bdsp",   r" bdsp=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)sr",     r" sr=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rlc",    r" redecompL=\1", s)
     s = re.sub(r"_(\d+\.?\d*)ref",    r" ref=\1", s)
     s = re.sub(r"_(\d+\.?\d*)er",     r" equalR=\1", s)
     s = re.sub(r"_(\d+\.?\d*)sm",     r" sm=\1", s)

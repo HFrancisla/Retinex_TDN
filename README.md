@@ -96,10 +96,10 @@ experiment:
 示例输出：
 
 ```
-LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr
+LOLv2_point_1.0r_0.05anchorv2_0.05bdsp_0.05rlc
 ```
 
-完整目录名还会追加时间戳：`experiments/LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr_20260619-153000/`
+完整目录名还会追加时间戳：`experiments/LOLv2_point_1.0r_0.05anchorv2_0.05bdsp_0.05rlc_20260619-153000/`
 
 ### 损失权重缩写
 
@@ -116,7 +116,7 @@ LOLv2_paired_1r_0.05anchor_0.05bdsp_0.05sr
 | `bdsp_weight` | `bdsp` | BDSP 结构保持 |
 | `smooth_weight` | `sm` | 光照平滑（仅 `_pixel` 模式） |
 | `smooth_version` | `v1` / `v2` / `v3` | Raw / Current / Compromise；与 smooth 合并为 `0.1smv1/v2/v3` |
-| `self_recon_weight` | `sr` | 自重构约束 |
+| `redecomp_l_consistency_weight` | `rlc` | R 二次分解后的 L 一致性约束 |
 | `reflect_weight` | `ref` | 反射约束 |
 
 Smooth loss 的 Raw、Current 与 Compromise 三种设计说明见

@@ -240,10 +240,13 @@ class PairedLoss(nn.Module):
         return self.smooth_weight > 0
 
     @property
-    def self_recon_weight(self) -> float:
+    def redecomp_l_consistency_weight(self) -> float:
         return 0.0
 
-    def forward(self, R_low, R_high, L_low, L_high, I_low, I_high, L_R_low=None, L_R_high=None):
+    def forward(
+        self, R_low, R_high, L_low, L_high, I_low, I_high,
+        L_redecomp_low=None, L_redecomp_high=None,
+    ):
         zero = torch.tensor(0.0, device=R_low.device)
         L_low_3 = torch.cat((L_low, L_low, L_low), dim=1)
         L_high_3 = torch.cat((L_high, L_high, L_high), dim=1)
@@ -315,7 +318,8 @@ class UnpairedLoss(nn.Module):
     """
 
     def __init__(self, l_type='point', recon_weight=1, anchor_weight=0.05,
-                 bdsp_weight=0.05, smooth_weight=0, self_recon_weight=0.05,
+                 bdsp_weight=0.05, smooth_weight=0,
+                 redecomp_l_consistency_weight=0.05,
                  anchor_version='v2', smooth_version='v1'):
         super().__init__()
         _validate_anchor_version(anchor_version)
@@ -326,14 +330,17 @@ class UnpairedLoss(nn.Module):
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
-        self.self_recon_weight = self_recon_weight
+        self.redecomp_l_consistency_weight = redecomp_l_consistency_weight
         self.smooth_weight = smooth_weight
 
     @property
     def use_smooth(self):
         return self.l_type == 'pixel' and self.smooth_weight > 0
 
-    def forward(self, R_low, R_high, L_low, L_high, I_low, I_high, L_R_low, L_R_high):
+    def forward(
+        self, R_low, R_high, L_low, L_high, I_low, I_high,
+        L_redecomp_low, L_redecomp_high,
+    ):
         zero = torch.tensor(0.0, device=R_low.device)
         L_low_3 = torch.cat((L_low, L_low, L_low), dim=1)
         L_high_3 = torch.cat((L_high, L_high, L_high), dim=1)
@@ -356,14 +363,15 @@ class UnpairedLoss(nn.Module):
         else:
             self.bdsp_loss = zero
 
-        if self.self_recon_weight > 0:
-            # unpaired 图像没有空间对应关系，只比较每个样本的全局统计量。
-            self.self_recon_loss = F.l1_loss(
-                L_R_low.mean(dim=(2, 3), keepdim=True),
-                L_R_high.mean(dim=(2, 3), keepdim=True),
+        if self.redecomp_l_consistency_weight > 0:
+            # 将第一次得到的 R 再分解；unpaired 图像没有空间对应关系，
+            # 因此只比较二次 L 的每样本全局统计量。
+            self.redecomp_l_consistency_loss = F.l1_loss(
+                L_redecomp_low.mean(dim=(2, 3), keepdim=True),
+                L_redecomp_high.mean(dim=(2, 3), keepdim=True),
             )
         else:
-            self.self_recon_loss = zero
+            self.redecomp_l_consistency_loss = zero
 
         if self.use_smooth:
             self.Ismooth_loss_low = _retinex_smooth(L_low, R_low, self.smooth_version)
@@ -378,7 +386,7 @@ class UnpairedLoss(nn.Module):
             self.recon_weight * loss_recon
             + self.anchor_weight * loss_anchor
             + self.bdsp_weight * self.bdsp_loss
-            + self.self_recon_weight * self.self_recon_loss
+            + self.redecomp_l_consistency_weight * self.redecomp_l_consistency_loss
             + self.smooth_weight * loss_smooth
         )
 
@@ -391,9 +399,10 @@ class UnpairedLoss(nn.Module):
             components['bdsp'] = (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss)
         if self.smooth_weight > 0:
             components['smooth'] = (loss_smooth, self.smooth_weight * loss_smooth)
-        if self.self_recon_weight > 0:
-            components['self_recon'] = (
-                self.self_recon_loss, self.self_recon_weight * self.self_recon_loss
+        if self.redecomp_l_consistency_weight > 0:
+            components['redecomp_l_consistency'] = (
+                self.redecomp_l_consistency_loss,
+                self.redecomp_l_consistency_weight * self.redecomp_l_consistency_loss,
             )
         return _loss_output(self.loss_Decom, components)
 
@@ -408,8 +417,9 @@ class PureLowDoubleLoss(nn.Module):
     """
 
     def __init__(self, l_type='point', recon_weight=1.0, anchor_weight=0.05,
-                 bdsp_weight=0.05, self_recon_weight=0.05, reflect_weight=0.0,
-                 smooth_weight=0, anchor_version='v2', smooth_version='v1'):
+                 bdsp_weight=0.05, redecomp_l_consistency_weight=0.05,
+                 reflect_weight=0.0, smooth_weight=0, anchor_version='v2',
+                 smooth_version='v1'):
         super().__init__()
         _validate_anchor_version(anchor_version)
         _validate_smooth_version(smooth_version)
@@ -419,7 +429,7 @@ class PureLowDoubleLoss(nn.Module):
         self.recon_weight = recon_weight
         self.anchor_weight = anchor_weight
         self.bdsp_weight = bdsp_weight
-        self.self_recon_weight = self_recon_weight
+        self.redecomp_l_consistency_weight = redecomp_l_consistency_weight
         self.reflect_weight = reflect_weight
         self.smooth_weight = smooth_weight
 
@@ -427,7 +437,10 @@ class PureLowDoubleLoss(nn.Module):
     def use_smooth(self) -> bool:
         return self.l_type == 'pixel' and self.smooth_weight > 0
 
-    def forward(self, R1, R2, L1, L2, I1, I2, LR1, LR2):
+    def forward(
+        self, R1, R2, L1, L2, I1, I2,
+        L_redecomp_1, L_redecomp_2,
+    ):
         zero = torch.tensor(0.0, device=R1.device)
         L1_3 = torch.cat((L1, L1, L1), dim=1)
         L2_3 = torch.cat((L2, L2, L2), dim=1)
@@ -446,10 +459,12 @@ class PureLowDoubleLoss(nn.Module):
         else:
             self.bdsp_loss = zero
 
-        if self.self_recon_weight > 0:
-            self.self_recon_loss = F.l1_loss(LR1, LR2)
+        if self.redecomp_l_consistency_weight > 0:
+            self.redecomp_l_consistency_loss = F.l1_loss(
+                L_redecomp_1, L_redecomp_2
+            )
         else:
-            self.self_recon_loss = zero
+            self.redecomp_l_consistency_loss = zero
 
         if self.reflect_weight > 0:
             # 对称 stop-gradient，但取平均以保持与单个 L1 相同的数值尺度。
@@ -470,7 +485,7 @@ class PureLowDoubleLoss(nn.Module):
             self.recon_weight * loss_recon
             + self.anchor_weight * loss_anchor
             + self.bdsp_weight * self.bdsp_loss
-            + self.self_recon_weight * self.self_recon_loss
+            + self.redecomp_l_consistency_weight * self.redecomp_l_consistency_loss
             + self.reflect_weight * self.reflect_loss
             + self.smooth_weight * loss_smooth
         )
@@ -484,9 +499,10 @@ class PureLowDoubleLoss(nn.Module):
             components['bdsp'] = (self.bdsp_loss, self.bdsp_weight * self.bdsp_loss)
         if self.smooth_weight > 0:
             components['smooth'] = (loss_smooth, self.smooth_weight * loss_smooth)
-        if self.self_recon_weight > 0:
-            components['self_recon'] = (
-                self.self_recon_loss, self.self_recon_weight * self.self_recon_loss
+        if self.redecomp_l_consistency_weight > 0:
+            components['redecomp_l_consistency'] = (
+                self.redecomp_l_consistency_loss,
+                self.redecomp_l_consistency_weight * self.redecomp_l_consistency_loss,
             )
         if self.reflect_weight > 0:
             components['reflect'] = (
