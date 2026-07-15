@@ -9,30 +9,46 @@ configs/
 ├── README.md
 ├── RetinexPointRaw/           # 全局光照标量 L [B,1,1,1]
 │   ├── paired/
-│   │   └── LOLv2_base.yaml
-│   ├── unpaired/
-│   │   └── LOLv2_base.yaml
-│   ├── pure_low_single/
-│   │   ├── BDD100k_base.yaml
-│   │   └── LOLv2_base.yaml
-│   └── pure_low_double/
-│       ├── BDD100k_point.yaml
-│       └── LOLv2_point.yaml
+│   │   └── LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq.yaml
+│   └── pure_low_single/
+│       ├── BDD_1.0r_0.05anchorv1_0.05bdsp.yaml
+│       ├── BDD_1.0r_0.05anchorv2_0.05bdsp.yaml
+│       ├── LOLv2_1.0r_0.05anchorv1_0.05bdsp.yaml
+│       └── LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml
 ├── RetinexPixelClassic/       # 逐像素 L [B,1,H,W]（轻量 CNN）
 │   ├── paired/
-│   │   └── LOLv2_pixel_classic.yaml
+│   │   └── LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml
 │   └── pure_low_single/
-│       ├── BDD100k_pixel_classic.yaml
-│       └── LOLv2_pixel_classic.yaml
+│       ├── BDD_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml
+│       ├── BDD_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml
+│       ├── LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml
+│       └── LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml
 ├── RetinexPixelTrans/         # 逐像素 L [B,1,H,W]（Transformer）
 │   ├── paired/
-│   │   └── LOLv2_pixel_trans.yaml
+│   │   ├── LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml
+│   │   ├── LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.3smv1.yaml
+│   │   └── LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.5smv1.yaml
 │   └── pure_low_single/
-│       └── LOLv2_pixel_trans.yaml
+│       ├── BDD_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml
+│       ├── BDD_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml
+│       ├── BDD_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml
+│       ├── BDD_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml
+│       ├── BDD_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml
+│       ├── BDD_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml
+│       ├── LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml
+│       ├── LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml
+│       ├── LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml
+│       ├── LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml
+│       ├── LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml
+│       └── LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml
 └── RetinexPixelTransMinus/    # 逐像素 L [B,1,H,W]（Transformer 变体）
+    ├── paired/
+    │   └── LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml
     └── pure_low_single/
-        ├── BDD100k_pixel_trans_minus.yaml
-        └── LOLv2_pixel_trans_minus.yaml
+        ├── BDD_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml
+        ├── BDD_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml
+        ├── LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml
+        └── LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml
 ```
 
 ## 模型说明
@@ -51,9 +67,7 @@ configs/
 | 模式 | 目录 | 数据要求 | 说明 |
 |---|---|---|---|
 | `paired` | `paired/` | low + high 配对 | 有监督成对训练 |
-| `unpaired` | `unpaired/` | low + high 非配对 | 非配对训练 |
 | `pure_low_single` | `pure_low_single/` | 仅 low 图像 | 单视图自监督分解 |
-| `pure_low_double` | `pure_low_double/` | 仅 low 图像 | 双视图自监督分解（含光度增强） |
 
 ## 参数约定
 
@@ -113,19 +127,12 @@ loss:
 
 ```bash
 # paired
-python train.py --config configs/RetinexPointRaw/paired/LOLv2_base.yaml
-python train.py --config configs/RetinexPixelClassic/paired/LOLv2_pixel_classic.yaml
-
-# unpaired
-python train.py --config configs/RetinexPointRaw/unpaired/LOLv2_base.yaml
+python train.py --config configs/RetinexPointRaw/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq.yaml
+python train.py --config configs/RetinexPixelClassic/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml
 
 # pure_low_single
-python train.py --config configs/RetinexPointRaw/pure_low_single/LOLv2_base.yaml
-python train.py --config configs/RetinexPixelClassic/pure_low_single/BDD100k_pixel_classic.yaml
-
-# pure_low_double（含光度增强）
-python train.py --config configs/RetinexPointRaw/pure_low_double/LOLv2_point.yaml
-python train.py --config configs/RetinexPointRaw/pure_low_double/BDD100k_point.yaml
+python train.py --config configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml
+python train.py --config configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml
 ```
 
 ## 创建新实验
@@ -134,9 +141,9 @@ python train.py --config configs/RetinexPointRaw/pure_low_double/BDD100k_point.y
 2. 复制已有配置并修改实验名称和参数：
 
 ```bash
-cp configs/RetinexPointRaw/pure_low_double/LOLv2_point.yaml \
-   configs/RetinexPointRaw/pure_low_double/my_exp.yaml
-python train.py --config configs/RetinexPointRaw/pure_low_double/my_exp.yaml
+cp configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml \
+   configs/RetinexPointRaw/pure_low_single/my_exp.yaml
+python train.py --config configs/RetinexPointRaw/pure_low_single/my_exp.yaml
 ```
 
 ## 最佳实践

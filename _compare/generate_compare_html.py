@@ -13,12 +13,46 @@ IMG_PREFIX = "../../"
 
 # ── helpers ───────────────────────────────────────────────
 
+# 数据集名称标准化：将 data.path 映射为规范的短名称
+DATASET_ALIASES = {
+    "BDD_below40": "BDDnight",  # BDDnight 的亮度过滤子集
+}
+
+# 数据集在 HTML 中的显示顺序（未列出的数据集按名称排序追加到末尾）
+DATASET_ORDER = ["LOLv2", "BDDnight"]
+
+
+def _dataset_sort_key(ds_name: str):
+    """按 DATASET_ORDER 排序，未列出的排到末尾后按名称排序。"""
+    try:
+        return (0, DATASET_ORDER.index(ds_name), "")
+    except ValueError:
+        return (1, 0, ds_name)
+
+
+def normalize_dataset_name(raw_path: str) -> str:
+    """将配置中的 data.path 标准化为数据集短名称。"""
+    name = os.path.basename(raw_path.rstrip("/\\"))
+    return DATASET_ALIASES.get(name, name)
+
+
 def extract_loss_config(run_name: str) -> str:
-    """从 run 目录名提取损失配置部分。"""
+    """从 run 目录名提取损失配置部分。
+
+    兼容两种格式：
+    - 旧格式: {dataset}_{pixel|point}_{loss_config}_{timestamp}
+    - 新格式: {dataset}_{loss_config}_{timestamp}
+    """
+    # 去掉末尾时间戳 _YYYYMMDD-HHMMSS
     s = re.sub(r"_\d{8}-\d{6}$", "", run_name)
+    # 旧格式兼容: _pixel_ 或 _point_ 分隔
     m = re.search(r"_(pixel|point)_", s)
     if m:
         return s[m.end():]
+    # 新格式: 损失配置以数字权重开头 (如 1.0r, 0.3r)
+    m = re.search(r"_\d", s)
+    if m:
+        return s[m.start() + 1:]
     return s
 
 
@@ -44,7 +78,7 @@ def loss_short(loss: str) -> str:
 
 # ── 收集实验 ──────────────────────────────────────────────
 
-# 结构: [{dataset, model, mode, loss, loss_short, exp, iters, psnr, rel_path, img_indices}, ...]
+# 结构: [{dataset_id, dataset_path, model, mode, loss, loss_short, exp, iters, psnr, rel_path, img_indices}, ...]
 experiments = []
 for model_dir in sorted(EXP_DIR.iterdir()):
     if not model_dir.is_dir():
@@ -60,7 +94,8 @@ for model_dir in sorted(EXP_DIR.iterdir()):
             if not cfg.exists() or not syn.exists():
                 continue
             config = yaml.safe_load(cfg.read_text())
-            dataset = config["data"]["path"]
+            dataset_path = config["data"]["path"]
+            dataset_id = normalize_dataset_name(dataset_path)
             run_name = run_dir.name
             loss_cfg = extract_loss_config(run_name)
 
@@ -95,28 +130,30 @@ for model_dir in sorted(EXP_DIR.iterdir()):
                             )
 
             experiments.append({
-                "dataset":     dataset,
-                "model":       model,
-                "mode":        mode,
-                "loss":        loss_cfg,
-                "loss_short":  loss_short(loss_cfg),
-                "exp":         run_name,
-                "iters":       iters,
-                "psnr":        psnr,
-                "rel_path":    str(run_dir.relative_to(ROOT)),
+                "dataset_id":   dataset_id,
+                "dataset_path": dataset_path,
+                "model":        model,
+                "mode":         mode,
+                "loss":         loss_cfg,
+                "loss_short":   loss_short(loss_cfg),
+                "exp":          run_name,
+                "iters":        iters,
+                "psnr":         psnr,
+                "rel_path":     str(run_dir.relative_to(ROOT)),
                 "img_indices": img_indices,
             })
 
-# ── 按 dataset → model → mode → loss 分组 ────────────────
+# ── 按 dataset_id → model → mode → loss 分组 ────────────────
 
 datasets = {}
 for e in experiments:
-    ds = e["dataset"]
-    if ds not in datasets:
-        datasets[ds] = {"models": [], "test_files": [], "test_count": 0,
-                        "_model_idx": {}, "_mode_idx": {}}
+    ds_id = e["dataset_id"]
+    if ds_id not in datasets:
+        datasets[ds_id] = {"models": [], "test_files": [], "test_count": 0,
+                           "dataset_path": e["dataset_path"],  # 用于文件查找
+                           "_model_idx": {}, "_mode_idx": {}}
 
-    info = datasets[ds]
+    info = datasets[ds_id]
     model = e["model"]
     mode = e["mode"]
     loss = e["loss"]
@@ -145,30 +182,40 @@ for e in experiments:
     loss_slot["runs"].append(e)
 
 # 清理临时索引 + test 文件 + all_iters
-for ds_key, info in datasets.items():
+for ds_key, info in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0])):
     del info["_model_idx"]
     for model_slot in info["models"]:
         del model_slot["_mode_idx"]
         for mode_slot in model_slot["modes"]:
             del mode_slot["_loss_idx"]
 
-    test_low = ROOT / ds_key / "test" / "low"
+    test_low = ROOT / info["dataset_path"] / "test" / "low"
     if test_low.exists():
         info["test_files"] = sorted([f.name for f in test_low.glob("*.*")])
         info["test_count"] = len(info["test_files"])
 
     all_iters = set()
+    max_img_idx = -1
     for model_slot in info["models"]:
         for mode_slot in model_slot["modes"]:
             for loss_slot in mode_slot["losses"]:
                 for r in loss_slot["runs"]:
                     all_iters.update(r["iters"])
+                    for v in r["img_indices"].values():
+                        if v > max_img_idx:
+                            max_img_idx = v
     info["all_iters"] = sorted(all_iters, key=lambda x: int(x))
+    info["max_img_idx"] = max_img_idx
 
 # ── 构建 JS 数据 ──────────────────────────────────────────
 
+# 按 DATASET_ORDER 排序 + 传给 JS 一个有序的 key 列表
+_ordered_ds_keys = [k for k, _ in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0]))]
+
 js_data = {}
-for ds_key, info in datasets.items():
+js_data["_dataset_order"] = _ordered_ds_keys
+for ds_key in _ordered_ds_keys:
+    info = datasets[ds_key]
     js_models = []
     for model_slot in info["models"]:
         js_modes = []
@@ -196,11 +243,26 @@ for ds_key, info in datasets.items():
             "model": model_slot["model"],
             "modes": js_modes,
         })
+    # 数据集图片路径前缀（HTML 相对路径 — 相对于项目根目录）
+    _raw_path = info.get("dataset_path", ds_key)
+    if os.path.isabs(_raw_path):
+        try:
+            _img_prefix = os.path.relpath(_raw_path, ROOT)
+        except ValueError:
+            _img_prefix = f"datasets/{os.path.basename(_raw_path)}"
+    else:
+        _img_prefix = _raw_path
+    # 截断 test_files：只保留 run 图片实际能覆盖的范围，避免嵌入数千无用文件名
+    _max_need = info.get("max_img_idx", -1) + 1
+    _tfiles = info["test_files"][:_max_need] if _max_need > 0 and info["test_files"] else info["test_files"]
+
     js_data[ds_key] = {
-        "models":     js_models,
-        "test_count": info["test_count"],
-        "test_files": info["test_files"],
-        "all_iters":  info["all_iters"],
+        "models":      js_models,
+        "test_count":  info["test_count"],
+        "test_files":  _tfiles,
+        "all_iters":   info["all_iters"],
+        "dataset_path": _raw_path,
+        "img_prefix":  _img_prefix,
     }
 
 # ── HTML ──────────────────────────────────────────────────
@@ -308,7 +370,7 @@ let currentIdx = 0;
 
 function init() {{
     const tabs = document.getElementById('tabs');
-    const dsOrder = Object.keys(DATA).sort();
+    const dsOrder = DATA._dataset_order || Object.keys(DATA).filter(k => k !== '_dataset_order').sort();
     for (const ds of dsOrder) {{
         const d = document.createElement('div');
         d.className = 'tab';
@@ -355,18 +417,22 @@ function selectDS(ds) {{
 
 function getEffectiveCount() {{
     const info = DATA[currentDS];
-    let minMax = info.test_count - 1;
+    // 从 test_count-1 或 run 的 img_indices 中取最小值（交集），
+    // 但当 test_count=0 时（无原始图片可用），回退到 run 图片的最大索引
+    let minMax = info.test_count > 0 ? info.test_count - 1 : -1;
     for (const model of info.models) {{
         for (const md of model.modes) {{
             for (const ls of md.losses) {{
                 for (const r of ls.runs) {{
                     const m = r.img_indices[currentIter];
-                    if (m !== undefined && m < minMax) minMax = m;
+                    if (m !== undefined) {{
+                        if (minMax < 0 || m < minMax) minMax = m;
+                    }}
                 }}
             }}
         }}
     }}
-    return minMax + 1;
+    return minMax < 0 ? 0 : minMax + 1;
 }}
 
 function updateSlider() {{
@@ -482,7 +548,7 @@ function render() {{
     for (let i = start; i <= end; i++) {{
         html += `<tr><td class="idx" style="font-size:11px;color:#888">${{i}}</td>`;
         const origFile = info.test_files[i] || '';
-        html += `<td class="original"><img src="${{IMG_PREFIX}}datasets/${{currentDS.replace('datasets/','')}}/test/low/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
+        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/test/low/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
         for (let ci = 0; ci < cols.length; ci++) {{
             const col = cols[ci];
             const r = col.run;

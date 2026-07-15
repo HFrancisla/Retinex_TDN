@@ -87,19 +87,18 @@ experiment:
   auto_name: true        # 自动生成
 ```
 
-**auto_name=true** 时自动生成格式：`{dataset}_{mode}_{损失权重缩写}`
+**auto_name=true** 时自动生成格式：`{dataset}_{损失权重缩写}`
 
 - `dataset`：取 `data.path` 最后一段目录名
-- `mode`：训练模式
 - 非零损失权重按固定顺序拼接，格式为 `{值}{缩写}`
 
 示例输出：
 
 ```
-LOLv2_point_1.0r_0.05anchorv2_0.05bdsp_0.05rlc
+LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.05rlc
 ```
 
-完整目录名还会追加时间戳：`experiments/LOLv2_point_1.0r_0.05anchorv2_0.05bdsp_0.05rlc_20260619-153000/`
+完整目录名还会追加时间戳：`experiments/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.05rlc_20260619-153000/`
 
 ### 损失权重缩写
 

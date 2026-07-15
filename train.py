@@ -77,9 +77,9 @@ def generate_experiment_name(cfg):
     根据配置生成实验目录名。
 
     auto_name=false 时：使用 experiment.name（必填）。
-    auto_name=true 时：{dataset}_{mode}[_{losses}]
-    其中 dataset 取 data.path 末段，mode 取 loss.mode 或 data.mode，
-    losses 只包含非零权重，格式为 {值}{缩写}，用 _ 连接。
+    auto_name=true 时：{dataset}_{losses}
+    其中 dataset 取 data.path 末段，losses 只包含非零权重，
+    格式为 {值}{缩写}，用 _ 连接。
     """
     # 损失字段 -> 缩写映射（按固定顺序输出）
     LOSS_ABBR = [
@@ -115,15 +115,6 @@ def generate_experiment_name(cfg):
     data_path = data_cfg.get("path", "unknown")
     dataset = os.path.basename(data_path.rstrip("/\\"))
 
-    # mode: 只取 _pixel / _point 后缀（data_mode 已在目录路径中）
-    full_mode = loss_cfg.get("mode", "unknown")
-    if full_mode.endswith('_pixel'):
-        mode = 'pixel'
-    elif full_mode.endswith('_point'):
-        mode = 'point'
-    else:
-        mode = full_mode  # 兜底
-
     # 损失权重：显式声明的全部输出，方便横向对比
     parts = []
     for key, abbr in LOSS_ABBR:
@@ -139,7 +130,7 @@ def generate_experiment_name(cfg):
             else:
                 parts.append(f"{val}{abbr}")
 
-    return "_".join([dataset, mode] + parts)
+    return "_".join([dataset] + parts)
 
 
 _WEIGHTED_LOSS_LOG_ORDER = (
