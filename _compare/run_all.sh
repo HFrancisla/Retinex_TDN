@@ -68,7 +68,14 @@ echo ""
 echo "▶ [5/5] analyze_decomposition — R/L 分解统计诊断"
 echo "────────────────────────────────────────────────────────────"
 
+FORCE_FLAG=""
+if [ "${RETINEX_FORCE_ANALYZE:-0}" = "1" ]; then
+    FORCE_FLAG="--force"
+    echo "  (强制模式：忽略已有报告)"
+fi
+
 ANALYZE_COUNT=0
+ANALYZE_SKIP_COUNT=0
 for model_dir in "$ROOT_DIR/experiments"/*/; do
     [ -d "$model_dir" ] || continue
     for mode_dir in "$model_dir"/*/; do
@@ -79,7 +86,11 @@ for model_dir in "$ROOT_DIR/experiments"/*/; do
                 ANALYZE_COUNT=$((ANALYZE_COUNT + 1))
                 rel="${run_dir#$ROOT_DIR/experiments/}"
                 echo "[$ANALYZE_COUNT] $rel"
-                "$PYTHON" "$SCRIPT_DIR/analyze_decomposition.py" "$run_dir"
+                output=$("$PYTHON" "$SCRIPT_DIR/analyze_decomposition.py" $FORCE_FLAG "$run_dir" 2>&1) || true
+                echo "$output"
+                if echo "$output" | grep -q "\[SKIP\]"; then
+                    ANALYZE_SKIP_COUNT=$((ANALYZE_SKIP_COUNT + 1))
+                fi
             fi
         done
     done
@@ -88,7 +99,11 @@ done
 if [ "$ANALYZE_COUNT" -eq 0 ]; then
     echo "⚠ 没有找到包含 img/ 和 config.yaml 的实验目录，跳过。"
 else
-    echo "✓ 步骤 5 完成（分析了 $ANALYZE_COUNT 个实验）"
+    if [ "$ANALYZE_SKIP_COUNT" -gt 0 ]; then
+        echo "✓ 步骤 5 完成（共 $ANALYZE_COUNT 个实验，跳过 $ANALYZE_SKIP_COUNT 个已有报告，实际分析 $((ANALYZE_COUNT - ANALYZE_SKIP_COUNT)) 个）"
+    else
+        echo "✓ 步骤 5 完成（分析了 $ANALYZE_COUNT 个实验）"
+    fi
 fi
 
 # ── 完成 ────────────────────────────────────────────────────

@@ -45,17 +45,17 @@ def loss_short(loss: str) -> str:
     s = loss
     if s and s[0].isdigit():
         s = '_' + s
-    s = re.sub(r"_(\d+\.?\d*)crh",    r" crossH=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)crl",    r" crossL=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)rh",     r" reconH=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)rl",     r" reconL=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)r_",     r" recon=\1_", s)
-    s = re.sub(r"_(\d+\.?\d*)anchor", r" anchor=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)bdsp",   r" bdsp=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)rlc",    r" redecompL=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)ref",    r" ref=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)er",     r" equalR=\1", s)
-    s = re.sub(r"_(\d+\.?\d*)sm",     r" sm=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)crh(v\d+)?",    r" crossH\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)crl(v\d+)?",    r" crossL\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rh(v\d+)?",     r" reconH\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rl(v\d+)?",     r" reconL\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)r(v\d+)?_",     r" recon\2=\1_", s)
+    s = re.sub(r"_(\d+\.?\d*)anchor(v\d+)?", r" anchor\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)bdsp(v\d+)?",   r" bdsp\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)rlc(v\d+)?",    r" redecompL\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)ref(v\d+)?",    r" ref\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)er(v\d+)?",     r" equalR\2=\1", s)
+    s = re.sub(r"_(\d+\.?\d*)sm(v\d+)?",     r" sm\2=\1", s)
     s = s.replace("_", " ")
     return s.strip()
 

@@ -77,6 +77,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="额外输出逐图片指标 CSV；默认只生成文本汇总",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="强制重新分析，即使已有报告且比源图片更新",
+    )
     return parser.parse_args()
 
 
@@ -199,7 +204,10 @@ def analyze_iteration(iteration_dir: Path, paired: bool) -> tuple[list[dict], li
             f"iter {iteration_dir.name} 缺少 L_low，序号：{missing_low_l[:10]}"
         )
     if not low_indices:
-        raise FileNotFoundError(f"iter {iteration_dir.name} 没有 *_R_low.png")
+        warnings.append(
+            f"iter {iteration_dir.name}: 目录为空，没有 *_R_low.png，跳过"
+        )
+        return [], warnings
 
     high_indices = set(paths[("R", "high")])
     if paired:
@@ -270,6 +278,34 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def is_analysis_fresh(report_path: Path, img_dir: Path) -> bool:
+    """报告是否存在且比 img/ 下所有 PNG 更新。"""
+    if not report_path.is_file():
+        return False
+    report_mtime = report_path.stat().st_mtime
+    newest_png_mtime = 0.0
+    for png in img_dir.rglob("*.png"):
+        newest_png_mtime = max(newest_png_mtime, png.stat().st_mtime)
+    return newest_png_mtime > 0 and newest_png_mtime <= report_mtime
+
+
+def read_summary_from_report(report_path: Path) -> str:
+    """从已有报告中提取第一条数据行的关键指标，用于 SKIP 摘要。"""
+    for line in report_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # 表头行以 "iter" 开头，数据行以数字开头
+        parts = line.split()
+        if parts and parts[0].isdigit():
+            # 列: iter, n, paired, Rlow_mean, Rlow_std, Rlow_>0.95, Rlow_grad, Llow_TV, R_LH_L1, R_LH_PSNR
+            cols = "  ".join(parts[:8])  # 取前 8 列（到 Llow_TV）
+            if len(parts) >= 10:
+                cols += f"  Rconsist_PSNR={parts[9]}"
+            return cols
+    return "-"
+
+
 def write_report(
     path: Path,
     experiment_dir: Path,
@@ -318,6 +354,16 @@ def main() -> int:
     args = parse_args()
     try:
         experiment_dir = resolve_experiment(args.experiment, args.experiments_dir)
+        prefix = args.output_prefix
+        report_path = experiment_dir / f"{prefix}.txt"
+        img_dir = experiment_dir / "img"
+
+        # ── 跳过机制：报告已存在且比 img/ 下所有 PNG 更新 → 跳过 ──
+        if not args.force and is_analysis_fresh(report_path, img_dir):
+            summary = read_summary_from_report(report_path)
+            print(f"[SKIP] {experiment_dir}  — 报告已是最新  ({summary})")
+            return 0
+
         config = load_config(experiment_dir)
         mode = str(config.get("data", {}).get("mode", "unknown"))
         paired = mode == "paired"
@@ -331,8 +377,6 @@ def main() -> int:
             warnings.extend(iteration_warnings)
         summaries = summarize(detail_rows)
 
-        prefix = args.output_prefix
-        report_path = experiment_dir / f"{prefix}.txt"
         write_report(report_path, experiment_dir, mode, summaries, warnings)
         output_paths = [report_path]
         if args.details:
