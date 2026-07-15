@@ -153,6 +153,7 @@ def validate_pipeline_config(cfg):
     data_cfg = cfg.get('data', {})
     model_cfg = cfg.get('model', {})
     train_cfg = cfg.get('training', {})
+    eval_cfg = train_cfg.get('eval', {})
     loss_cfg = cfg.get('loss', {})
 
     data_mode = data_cfg.get('mode')
@@ -191,6 +192,26 @@ def validate_pipeline_config(cfg):
         raise ValueError('training.max_iterations must be >= 0')
     if float(train_cfg.get('lr', 1e-4)) <= 0:
         raise ValueError('training.lr must be > 0')
+    quick_val_size = eval_cfg.get('quick_val_size', 0)
+    if not isinstance(quick_val_size, int) or quick_val_size < 0:
+        raise ValueError(
+            f'training.eval.quick_val_size must be a non-negative integer, '
+            f'got {quick_val_size!r}'
+        )
+    quick_val_crop_size = eval_cfg.get('quick_val_crop_size', 0)
+    if quick_val_size > 0 and (
+        not isinstance(quick_val_crop_size, int) or quick_val_crop_size <= 0
+    ):
+        raise ValueError(
+            'training.eval.quick_val_crop_size must be a positive integer '
+            'when quick_val_size is enabled'
+        )
+    final_full_validation = eval_cfg.get('final_full_validation', False)
+    if not isinstance(final_full_validation, bool):
+        raise ValueError('training.eval.final_full_validation must be a boolean')
+    final_val_batch_size = eval_cfg.get('final_val_batch_size', data_cfg.get('val_batch_size', 1))
+    if not isinstance(final_val_batch_size, int) or final_val_batch_size <= 0:
+        raise ValueError('training.eval.final_val_batch_size must be a positive integer')
     for key, value in loss_cfg.items():
         if key.endswith('_weight'):
             if not isinstance(value, (int, float)) or not np.isfinite(value) or value < 0:
@@ -219,6 +240,15 @@ def set_rng_state(state):
     torch.set_rng_state(state['torch'])
     if torch.cuda.is_available() and 'cuda' in state:
         torch.cuda.set_rng_state_all(state['cuda'])
+
+
+def _fixed_validation_subset(paths, size, seed):
+    """返回确定性随机子集及其原始索引，不扰动训练 RNG。"""
+    if size <= 0 or size >= len(paths):
+        indices = list(range(len(paths)))
+    else:
+        indices = sorted(random.Random(seed).sample(range(len(paths)), size))
+    return [paths[index] for index in indices], indices
 
 
 def main(args):
@@ -301,6 +331,7 @@ def main(args):
     data_cfg = cfg.get("data", {})
     model_cfg = cfg.get("model", {})
     train_cfg = cfg.get("training", {})
+    eval_cfg = train_cfg.get("eval", {})
     loss_cfg = cfg.get("loss", {})
     if "mode" not in loss_cfg:
         raise ValueError(
@@ -394,14 +425,56 @@ def main(args):
     else:
         train_low_path, train_high_path, val_low_path, val_high_path = read_data(data_path, mode=data_mode)
 
+    # BDD 等大规模数据集可通过配置启用两阶段验证：训练中使用固定子集和
+    # 确定性中心裁剪，训练结束再用最佳 checkpoint 跑完整原图验证。
+    full_val_low_path = list(val_low_path)
+    full_val_high_path = list(val_high_path)
+    quick_val_size = eval_cfg.get('quick_val_size', 0)
+    quick_val_crop_size = eval_cfg.get('quick_val_crop_size', 0)
+    final_full_validation = eval_cfg.get('final_full_validation', False)
+    final_val_batch_size = eval_cfg.get(
+        'final_val_batch_size', data_cfg.get('val_batch_size', 1)
+    )
+    quick_val_enabled = quick_val_size > 0
+    if quick_val_enabled:
+        val_low_path, quick_low_indices = _fixed_validation_subset(
+            full_val_low_path, quick_val_size, seed
+        )
+        if data_mode == 'paired':
+            # paired 的 low/high 必须保持同一索引。
+            val_high_path = [full_val_high_path[index] for index in quick_low_indices]
+        elif full_val_high_path:
+            val_high_path, _ = _fixed_validation_subset(
+                full_val_high_path, quick_val_size, seed + 1
+            )
+
+        manifest_path = os.path.join(filefold_path, 'quick_val_manifest.txt')
+        with open(manifest_path, 'w', encoding='utf-8') as manifest:
+            manifest.write(
+                f'seed: {seed}\nrequested_size: {quick_val_size}\n'
+                f'actual_size: {len(val_low_path)}\ncrop_size: {quick_val_crop_size}\n\n'
+            )
+            for path in val_low_path:
+                manifest.write(f'{path}\n')
+        print(
+            f'quick validation: {len(val_low_path)}/{len(full_val_low_path)} images, '
+            f'fixed seed={seed}, center_crop={quick_val_crop_size}'
+        )
+        print(f'quick validation manifest: {manifest_path}')
+
     crop_size = data_cfg.get("crop_size", 256)
     if data_mode == "paired":
+        quick_val_transforms = []
+        if quick_val_enabled:
+            quick_val_transforms.append(T.CenterCrop(quick_val_crop_size))
+        quick_val_transforms.append(T.ToTensor())
         data_transform = {
             "train": T.Compose([T.RandomCrop(crop_size),
                                 T.RandomHorizontalFlip(0.5),
                                 T.RandomVerticalFlip(0.5),
                                 T.ToTensor()]),
-            "val": T.Compose([T.ToTensor()])
+            "val": T.Compose(quick_val_transforms),
+            "val_full": T.Compose([T.ToTensor()]),
         }
         train_dataset = MyDataSet(images_low_path=train_low_path,
                                   images_high_path=train_high_path,
@@ -409,14 +482,24 @@ def main(args):
         val_dataset = MyDataSet(images_low_path=val_low_path,
                                 images_high_path=val_high_path,
                                 transform=data_transform["val"])
+        full_val_dataset = MyDataSet(
+            images_low_path=full_val_low_path,
+            images_high_path=full_val_high_path,
+            transform=data_transform["val_full"],
+        ) if final_full_validation else None
     elif data_mode == "pure_low_double":
         from data.transforms import RandomGamma, RandomBrightness
+        quick_val_transforms = []
+        if quick_val_enabled:
+            quick_val_transforms.append(T.CenterCrop(quick_val_crop_size))
+        quick_val_transforms.append(T.ToTensor())
         data_transform = {
             "train": T.Compose([T.RandomCrop(crop_size),
                                 T.RandomHorizontalFlip(0.5),
                                 T.RandomVerticalFlip(0.5),
                                 T.ToTensor()]),
-            "val": T.Compose([T.ToTensor()])
+            "val": T.Compose(quick_val_transforms),
+            "val_full": T.Compose([T.ToTensor()]),
         }
         # 光度增强：仅训练时启用，对两个 view 独立应用
         aug_cfg = data_cfg.get("photometric_augment", {})
@@ -436,27 +519,46 @@ def main(args):
         val_dataset = PureLowDataSet(images_low_path=val_low_path,
                                       transform=data_transform["val"],
                                       photometric_transform=None)
+        full_val_dataset = PureLowDataSet(
+            images_low_path=full_val_low_path,
+            transform=data_transform["val_full"],
+            photometric_transform=None,
+        ) if final_full_validation else None
     elif data_mode == "pure_low_single":
         from torchvision import transforms as torchvision_T
+        quick_val_transforms = []
+        if quick_val_enabled:
+            quick_val_transforms.append(torchvision_T.CenterCrop(quick_val_crop_size))
+        quick_val_transforms.append(torchvision_T.ToTensor())
         data_transform = {
             "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size, pad_if_needed=True),
                                               torchvision_T.RandomHorizontalFlip(0.5),
                                               torchvision_T.RandomVerticalFlip(0.5),
                                               torchvision_T.ToTensor()]),
-            "val": torchvision_T.Compose([torchvision_T.ToTensor()])
+            "val": torchvision_T.Compose(quick_val_transforms),
+            "val_full": torchvision_T.Compose([torchvision_T.ToTensor()]),
         }
         train_dataset = PureLowSingleDataSet(images_low_path=train_low_path,
                                               transform=data_transform["train"])
         val_dataset = PureLowSingleDataSet(images_low_path=val_low_path,
                                             transform=data_transform["val"])
+        full_val_dataset = PureLowSingleDataSet(
+            images_low_path=full_val_low_path,
+            transform=data_transform["val_full"],
+        ) if final_full_validation else None
     else:
         from torchvision import transforms as torchvision_T
+        quick_val_transforms = []
+        if quick_val_enabled:
+            quick_val_transforms.append(torchvision_T.CenterCrop(quick_val_crop_size))
+        quick_val_transforms.append(torchvision_T.ToTensor())
         data_transform = {
             "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size, pad_if_needed=True),
                                               torchvision_T.RandomHorizontalFlip(0.5),
                                               torchvision_T.RandomVerticalFlip(0.5),
                                               torchvision_T.ToTensor()]),
-            "val": torchvision_T.Compose([torchvision_T.ToTensor()])
+            "val": torchvision_T.Compose(quick_val_transforms),
+            "val_full": torchvision_T.Compose([torchvision_T.ToTensor()]),
         }
         train_dataset = UnpairedDataSet(images_low_path=train_low_path,
                                         images_high_path=train_high_path,
@@ -466,6 +568,12 @@ def main(args):
                                       images_high_path=val_high_path,
                                       transform=data_transform["val"],
                                       random_pair=False)
+        full_val_dataset = UnpairedDataSet(
+            images_low_path=full_val_low_path,
+            images_high_path=full_val_high_path,
+            transform=data_transform["val_full"],
+            random_pair=False,
+        ) if final_full_validation else None
 
     batch_size = data_cfg.get("batch_size", 2)
     val_batch_size = data_cfg.get("val_batch_size", 1)
@@ -489,6 +597,20 @@ def main(args):
                                              pin_memory=device.type == 'cuda',
                                              num_workers=0,
                                              collate_fn=val_dataset.collate_fn)
+    full_val_loader = None
+    if full_val_dataset is not None:
+        full_val_loader = torch.utils.data.DataLoader(
+            full_val_dataset,
+            batch_size=final_val_batch_size,
+            shuffle=False,
+            pin_memory=device.type == 'cuda',
+            num_workers=0,
+            collate_fn=full_val_dataset.collate_fn,
+        )
+        print(
+            f'final full val_loader: samples={len(full_val_dataset)}, '
+            f'batch_size={final_val_batch_size}, workers=0, transform=full_resolution'
+        )
 
     # ---- 构建模型 ----
     model_name = model_cfg.get("name", "RetinexPointRaw")
@@ -622,6 +744,12 @@ def main(args):
     print(f"save_img_interval: {save_img_interval} steps")
     print(f"keep_top_ckpt: {keep_top_ckpt} (0=keep all)")
     print(f"max_save_images: {max_save_images}")
+    if quick_val_enabled:
+        print(
+            f"two-stage validation: quick={len(val_dataset)} samples at "
+            f"{quick_val_crop_size}x{quick_val_crop_size}; "
+            f"final_full={len(full_val_dataset) if full_val_dataset is not None else 0} samples"
+        )
 
     # ---- 校验 interval 约束 ----
     if log_interval <= 0:
@@ -838,7 +966,13 @@ def main(args):
         # ---- 评估 ----
         if global_iter % eval_interval == 0:
             print()
-            save_img = save_img_interval > 0 and global_iter % save_img_interval == 0
+            # 两阶段验证时，最终可视化由 best checkpoint 的全分辨率验证生成，
+            # 避免同一迭代目录混入 quick crop 结果。
+            save_img = (
+                not final_full_validation
+                and save_img_interval > 0
+                and global_iter % save_img_interval == 0
+            )
             _run_evaluation(global_iter, save_img, _averages(eval_accum, eval_sample_count))
             eval_accum.clear()
             eval_sample_count = 0
@@ -874,10 +1008,198 @@ def main(args):
     torch.save(_checkpoint_payload(global_iter), last_save_path)
     print(f'Saved final model: {last_save_path}')
 
+    if final_full_validation:
+        if full_val_loader is None:
+            raise RuntimeError('final_full_validation is enabled but full_val_loader is unavailable')
+
+        best_save_path = os.path.join(file_weights_path, 'best_model.pth')
+        candidate_checkpoints = []
+        seen_candidate_paths = set()
+        for quick_score, checkpoint_step, candidate_path in saved_ckpt_files:
+            candidate_path = os.path.abspath(candidate_path)
+            if candidate_path in seen_candidate_paths or not os.path.isfile(candidate_path):
+                continue
+            seen_candidate_paths.add(candidate_path)
+            candidate_checkpoints.append((quick_score, checkpoint_step, candidate_path))
+
+        # save_ckpt_interval=0 或短冒烟训练没有间隔 checkpoint 时，保持原行为，
+        # 至少完整验证 quick best（若未保存则退回 last）。
+        if not candidate_checkpoints:
+            fallback_path = best_save_path if os.path.isfile(best_save_path) else last_save_path
+            fallback_checkpoint = torch.load(
+                fallback_path, map_location='cpu', weights_only=False
+            )
+            candidate_checkpoints.append((
+                best_metric_value,
+                fallback_checkpoint.get('global_iter', global_iter),
+                os.path.abspath(fallback_path),
+            ))
+
+        candidate_checkpoints.sort(
+            key=lambda item: item[0], reverse=selection_mode == 'max'
+        )
+        print()
+        print(
+            f'[final full validation] evaluating {len(candidate_checkpoints)} '
+            f'quick-val candidate(s), samples={len(full_val_dataset)}, '
+            'transform=full_resolution'
+        )
+
+        final_save_images = (
+            save_img_interval > 0 and global_iter % save_img_interval == 0
+        )
+        candidate_image_root = os.path.join(file_img_path, '.final_candidates')
+        if os.path.isdir(candidate_image_root):
+            shutil.rmtree(candidate_image_root)
+        if final_save_images:
+            os.makedirs(candidate_image_root, exist_ok=True)
+
+        load_target = model.module if use_dp else model
+        candidate_results = []
+        winner = None
+        for quick_score, checkpoint_step, candidate_path in candidate_checkpoints:
+            candidate_checkpoint = torch.load(
+                candidate_path, map_location=device, weights_only=False
+            )
+            load_target.load_state_dict(candidate_checkpoint['model'])
+            checkpoint_step = candidate_checkpoint.get('global_iter', checkpoint_step)
+
+            print(
+                f'[final full candidate] checkpoint={os.path.basename(candidate_path)} '
+                f'| step={checkpoint_step} | quick_{selection_metric}={quick_score:.6f}'
+            )
+            full_metrics, full_psnr = evaluate(
+                model=model,
+                data_loader=full_val_loader,
+                device=device,
+                lr=optimizer.param_groups[0]['lr'],
+                filefold_path=candidate_image_root,
+                loss_function=loss_function,
+                save_images=final_save_images,
+                global_iter=checkpoint_step,
+                max_save_images=max_save_images,
+            )
+            if not full_metrics:
+                raise ValueError('final full validation dataset produced no samples')
+            full_score = _selection_value(full_metrics, full_psnr)
+
+            for key, value in full_metrics.items():
+                tb_writer.add_scalar(
+                    f'final_full_candidates/step_{checkpoint_step}/{key}',
+                    value, global_iter,
+                )
+            if full_psnr is not None:
+                tb_writer.add_scalar(
+                    f'final_full_candidates/step_{checkpoint_step}/psnr',
+                    full_psnr, global_iter,
+                )
+
+            result = {
+                'checkpoint': os.path.basename(candidate_path),
+                'checkpoint_path': candidate_path,
+                'checkpoint_step': checkpoint_step,
+                'quick_selection_value': quick_score,
+                'full_selection_value': full_score,
+                'metrics': full_metrics,
+                'psnr': full_psnr,
+                'image_dir': (
+                    os.path.join(candidate_image_root, str(checkpoint_step))
+                    if final_save_images else None
+                ),
+            }
+            candidate_results.append(result)
+            if winner is None or _is_better(
+                full_score, winner['full_selection_value']
+            ):
+                winner = result
+
+            candidate_parts = [_weighted_loss_summary(full_metrics)]
+            if full_psnr is not None:
+                candidate_parts.append(f'PSNR(proxy): {full_psnr:.2f}dB')
+            print(
+                f'[final full candidate step {checkpoint_step}] '
+                + ' | '.join(candidate_parts)
+            )
+
+        if winner is None:
+            raise RuntimeError('final full validation did not produce a winning checkpoint')
+
+        winner_checkpoint = torch.load(
+            winner['checkpoint_path'], map_location=device, weights_only=False
+        )
+        load_target.load_state_dict(winner_checkpoint['model'])
+        final_best_payload = dict(winner_checkpoint)
+        final_best_payload['final_full_validation'] = {
+            'selection_metric': selection_metric,
+            'selection_mode': selection_mode,
+            'selection_value': winner['full_selection_value'],
+            'metrics': winner['metrics'],
+            'psnr': winner['psnr'],
+            'sample_count': len(full_val_dataset),
+            'transform': 'full_resolution',
+        }
+        final_best_path = os.path.join(file_weights_path, 'final_best_model.pth')
+        torch.save(final_best_payload, final_best_path)
+
+        published_image_dir = None
+        if final_save_images:
+            published_image_dir = os.path.join(file_img_path, str(global_iter))
+            if os.path.isdir(published_image_dir):
+                shutil.rmtree(published_image_dir)
+            if not winner['image_dir'] or not os.path.isdir(winner['image_dir']):
+                raise RuntimeError('winning candidate image directory is missing')
+            shutil.move(winner['image_dir'], published_image_dir)
+            shutil.rmtree(candidate_image_root, ignore_errors=True)
+
+        for result in candidate_results:
+            for key in ('checkpoint_path', 'image_dir'):
+                result.pop(key, None)
+            result['selected'] = result['checkpoint_step'] == winner['checkpoint_step']
+
+        for key, value in winner['metrics'].items():
+            tb_writer.add_scalar(f'final_full_val/{key}', value, global_iter)
+        if winner['psnr'] is not None:
+            tb_writer.add_scalar('final_full_val/psnr', winner['psnr'], global_iter)
+
+        print(
+            f'[final full validation] selected step {winner["checkpoint_step"]} '
+            f'| {selection_metric}: {winner["full_selection_value"]:.6f} '
+            f'({selection_mode})'
+        )
+        print(f'[final full validation] final best model: {final_best_path}')
+        if published_image_dir is not None:
+            print(f'[final full validation] final best images: {published_image_dir}')
+
+        final_report = {
+            'selection_metric': selection_metric,
+            'selection_mode': selection_mode,
+            'sample_count': len(full_val_dataset),
+            'transform': 'full_resolution',
+            'batch_size': final_val_batch_size,
+            'candidate_count': len(candidate_results),
+            'candidates': candidate_results,
+            'final_best_model': os.path.basename(final_best_path),
+            'selected_checkpoint': winner['checkpoint'],
+            'selected_checkpoint_step': winner['checkpoint_step'],
+            'selected_full_value': winner['full_selection_value'],
+            'published_image_dir': (
+                os.path.relpath(published_image_dir, filefold_path)
+                if published_image_dir is not None else None
+            ),
+        }
+        final_report_path = os.path.join(filefold_path, 'final_full_validation.yaml')
+        with open(final_report_path, 'w', encoding='utf-8') as report_file:
+            yaml.safe_dump(
+                final_report, report_file, default_flow_style=False,
+                allow_unicode=True, sort_keys=False,
+            )
+        print(f'[final full validation] report: {final_report_path}')
+
     print()
     tb_writer.close()
+    validation_label = 'quick-val' if quick_val_enabled else 'validation'
     print(
-        f"\nTraining completed. Best {selection_metric} "
+        f"\nTraining completed. Best {validation_label} {selection_metric} "
         f"({selection_mode}): {best_metric_value:.6f}"
     )
     print(f"Results saved to: {filefold_path}")

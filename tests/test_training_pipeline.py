@@ -16,7 +16,11 @@ from loss.decomposition_loss import (
     _retinex_smooth,
 )
 from models import RetinexPixelClassic, RetinexPointRaw
-from train import generate_experiment_name, validate_pipeline_config
+from train import (
+    _fixed_validation_subset,
+    generate_experiment_name,
+    validate_pipeline_config,
+)
 from utils import (
     _build_loss_function, calculate_psnr, create_lr_scheduler, evaluate, train_step,
 )
@@ -549,6 +553,40 @@ def test_all_repository_configs_are_pipeline_consistent():
     assert paths
     for path in paths:
         validate_pipeline_config(yaml.safe_load(path.read_text(encoding='utf-8')))
+
+
+def test_fixed_validation_subset_is_deterministic_and_keeps_source_order():
+    paths = [f'image_{index}' for index in range(20)]
+    selected_a, indices_a = _fixed_validation_subset(paths, 7, seed=42)
+    selected_b, indices_b = _fixed_validation_subset(paths, 7, seed=42)
+    assert selected_a == selected_b
+    assert indices_a == indices_b == sorted(indices_a)
+    assert selected_a == [paths[index] for index in indices_a]
+    assert len(selected_a) == 7
+
+
+def test_only_bdd_configs_enable_two_stage_validation():
+    bdd_paths = list(Path('configs').glob('*/pure_low_single/BDD*.yaml'))
+    lol_paths = list(Path('configs').glob('*/pure_low_single/LOLv2*.yaml'))
+    assert len(bdd_paths) == 12
+    assert lol_paths
+
+    for path in bdd_paths:
+        training_cfg = yaml.safe_load(path.read_text(encoding='utf-8'))['training']
+        eval_cfg = training_cfg['eval']
+        assert training_cfg['save_ckpt_interval'] == 500
+        assert eval_cfg['keep_top_ckpt'] == 1
+        assert eval_cfg['quick_val_size'] == 1000
+        assert eval_cfg['quick_val_crop_size'] == 512
+        assert eval_cfg['final_full_validation'] is True
+        assert eval_cfg['final_val_batch_size'] == 2
+
+    for path in lol_paths:
+        eval_cfg = yaml.safe_load(path.read_text(encoding='utf-8'))['training']['eval']
+        assert 'quick_val_size' not in eval_cfg
+        assert 'quick_val_crop_size' not in eval_cfg
+        assert 'final_full_validation' not in eval_cfg
+        assert 'final_val_batch_size' not in eval_cfg
 
 
 def test_every_network_has_strictly_paired_v1_v2_anchor_benchmarks():
