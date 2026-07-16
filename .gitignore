@@ -6,3 +6,4 @@ _compare/html/
 __pycache__
 *.zip
 _tmp/
+_analysis/

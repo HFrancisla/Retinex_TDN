@@ -192,7 +192,17 @@ for ds_key, info in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0
     test_low = ROOT / info["dataset_path"] / "test" / "low"
     if test_low.exists():
         info["test_files"] = sorted([f.name for f in test_low.glob("*.*")])
-        info["test_count"] = len(info["test_files"])
+        info["test_subdir"] = "low"
+    else:
+        # Fallback for YOLO-format datasets (e.g., BDDnight: test/images/)
+        test_images = ROOT / info["dataset_path"] / "test" / "images"
+        if test_images.exists():
+            info["test_files"] = sorted([f.name for f in test_images.glob("*.*")])
+            info["test_subdir"] = "images"
+        else:
+            info["test_files"] = []
+            info["test_subdir"] = "low"
+    info["test_count"] = len(info["test_files"])
 
     all_iters = set()
     max_img_idx = -1
@@ -263,6 +273,7 @@ for ds_key in _ordered_ds_keys:
         "all_iters":   info["all_iters"],
         "dataset_path": _raw_path,
         "img_prefix":  _img_prefix,
+        "test_subdir": info.get("test_subdir", "low"),
     }
 
 # ── HTML ──────────────────────────────────────────────────
@@ -548,7 +559,7 @@ function render() {{
     for (let i = start; i <= end; i++) {{
         html += `<tr><td class="idx" style="font-size:11px;color:#888">${{i}}</td>`;
         const origFile = info.test_files[i] || '';
-        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/test/low/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
+        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/test/${{info.test_subdir}}/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
         for (let ci = 0; ci < cols.length; ci++) {{
             const col = cols[ci];
             const r = col.run;

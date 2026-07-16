@@ -217,7 +217,17 @@ def build_html(model_name: str, runs: list) -> str:
         test_low = ROOT / info["dataset_path"] / "test" / "low"
         if test_low.exists():
             info["test_files"] = sorted([f.name for f in test_low.glob("*.*")])
-            info["test_count"] = len(info["test_files"])
+            info["test_subdir"] = "low"
+        else:
+            # Fallback for YOLO-format datasets (e.g., BDDnight: test/images/)
+            test_images = ROOT / info["dataset_path"] / "test" / "images"
+            if test_images.exists():
+                info["test_files"] = sorted([f.name for f in test_images.glob("*.*")])
+                info["test_subdir"] = "images"
+            else:
+                info["test_files"] = []
+                info["test_subdir"] = "low"
+        info["test_count"] = len(info["test_files"])
         # 所有 iter 的并集 + 最大图片索引（用于截断 test_files）
         all_iters = set()
         max_img_idx = -1
@@ -279,6 +289,7 @@ def build_html(model_name: str, runs: list) -> str:
             "all_iters":     info["all_iters"],
             "dataset_path":  _raw_path,
             "img_prefix":    _img_prefix,
+            "test_subdir":   info.get("test_subdir", "low"),
         }
 
     return f"""<!DOCTYPE html>
@@ -557,7 +568,7 @@ function render() {{
         html += `<tr><td class="idx" style="font-size:11px;color:#888">${{i}}</td>`;
         // Original
         const origFile = info.test_files[i] || '';
-        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/test/low/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
+        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/test/${{info.test_subdir}}/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
         // 各列
         for (let ci = 0; ci < cols.length; ci++) {{
             const col = cols[ci];
