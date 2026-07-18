@@ -128,6 +128,61 @@ def loss_short(loss: str) -> str:
     return s.strip()
 
 
+LOSS_SORT_FIELDS = {
+    "paired": (
+        "rh", "rl", "crh", "crl", "cross", "er", "eq", "sm",
+    ),
+    "unpaired": (
+        "anchor", "bdsp", "rlc", "sm", "r",
+    ),
+    "pure_low_double": (
+        "anchor", "bdsp", "rlc", "ref", "sm", "r",
+    ),
+    "pure_low_single": (
+        "anchor", "bdsp", "sm", "r",
+    ),
+}
+DEFAULT_LOSS_SORT_FIELDS = (
+    "rh", "rl", "r", "crh", "crl", "cross", "er", "eq",
+    "anchor", "bdsp", "rlc", "ref", "sm",
+)
+
+
+def _parse_loss_terms(loss: str):
+    """Parse compact loss names like ``0.05anchorv2`` into sortable terms."""
+    terms = {}
+    versions = {}
+    unknown = []
+    for token in loss.split("_"):
+        m = re.fullmatch(r"(\d+(?:\.\d+)?)([A-Za-z]+?)(v\d+)?", token)
+        if not m:
+            unknown.append(token)
+            continue
+        value, name, version = m.groups()
+        terms[name] = float(value)
+        versions[name] = int(version[1:]) if version else 0
+    return terms, versions, tuple(unknown)
+
+
+def loss_sort_key(mode: str, loss: str):
+    """Put comparable loss configs next to each other in HTML columns."""
+    terms, versions, unknown = _parse_loss_terms(loss)
+    fields = LOSS_SORT_FIELDS.get(mode, DEFAULT_LOSS_SORT_FIELDS)
+    field_values = tuple((0, terms[name]) if name in terms else (1, 0.0) for name in fields)
+    version_values = tuple(
+        (0, versions[name]) if name in versions else (1, 0)
+        for name in fields
+    )
+    remaining = tuple(
+        sorted(
+            (name, terms[name], versions.get(name, 0))
+            for name in terms
+            if name not in fields
+        )
+    )
+    return field_values, version_values, remaining, unknown, loss
+
+
 # ── 收集实验 ──────────────────────────────────────────────
 
 # 结构: [{dataset_id, dataset_path, model, mode, loss, loss_short, exp, iters, psnr, rel_path, img_indices}, ...]
@@ -274,6 +329,11 @@ for ds_key, info in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0
         del model_slot["_mode_idx"]
         for mode_slot in model_slot["modes"]:
             del mode_slot["_loss_idx"]
+            mode_slot["losses"].sort(
+                key=lambda loss_slot: loss_sort_key(mode_slot["mode"], loss_slot["loss"])
+            )
+            for loss_slot in mode_slot["losses"]:
+                loss_slot["runs"].sort(key=lambda r: r["exp"])
 
     info["validation_count"] = len(info["validation_files"])
 

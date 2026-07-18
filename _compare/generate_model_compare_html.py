@@ -148,6 +148,61 @@ def mode_label(mode: str) -> str:
     return mode
 
 
+LOSS_SORT_FIELDS = {
+    "paired": (
+        "rh", "rl", "crh", "crl", "cross", "er", "eq", "sm",
+    ),
+    "unpaired": (
+        "anchor", "bdsp", "rlc", "sm", "r",
+    ),
+    "pure_low_double": (
+        "anchor", "bdsp", "rlc", "ref", "sm", "r",
+    ),
+    "pure_low_single": (
+        "anchor", "bdsp", "sm", "r",
+    ),
+}
+DEFAULT_LOSS_SORT_FIELDS = (
+    "rh", "rl", "r", "crh", "crl", "cross", "er", "eq",
+    "anchor", "bdsp", "rlc", "ref", "sm",
+)
+
+
+def _parse_loss_terms(loss: str):
+    """Parse compact loss names like ``0.05anchorv2`` into sortable terms."""
+    terms = {}
+    versions = {}
+    unknown = []
+    for token in loss.split("_"):
+        m = re.fullmatch(r"(\d+(?:\.\d+)?)([A-Za-z]+?)(v\d+)?", token)
+        if not m:
+            unknown.append(token)
+            continue
+        value, name, version = m.groups()
+        terms[name] = float(value)
+        versions[name] = int(version[1:]) if version else 0
+    return terms, versions, tuple(unknown)
+
+
+def loss_sort_key(mode: str, loss: str):
+    """Put comparable loss configs next to each other in single-model HTML."""
+    terms, versions, unknown = _parse_loss_terms(loss)
+    fields = LOSS_SORT_FIELDS.get(mode, DEFAULT_LOSS_SORT_FIELDS)
+    field_values = tuple((0, terms[name]) if name in terms else (1, 0.0) for name in fields)
+    version_values = tuple(
+        (0, versions[name]) if name in versions else (1, 0)
+        for name in fields
+    )
+    remaining = tuple(
+        sorted(
+            (name, terms[name], versions.get(name, 0))
+            for name in terms
+            if name not in fields
+        )
+    )
+    return field_values, version_values, remaining, unknown, loss
+
+
 # ── 收集实验 ──────────────────────────────────────────────
 
 def collect_experiments():
@@ -299,6 +354,9 @@ def build_html(model_name: str, runs: list) -> str:
         del info["_mode_idx"]
         for m in info["modes"]:
             del m["_loss_idx"]
+            m["losses"].sort(key=lambda loss_slot: loss_sort_key(m["mode"], loss_slot["loss"]))
+            for loss_slot in m["losses"]:
+                loss_slot["runs"].sort(key=lambda r: r["run_name"])
         info["validation_count"] = len(info["validation_files"])
         # 所有 iter 的并集 + 最大图片索引（用于截断 validation_files）
         all_iters = set()
