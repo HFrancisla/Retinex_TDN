@@ -20,6 +20,7 @@ DATASET_ALIASES = {
 
 # 数据集在 HTML 中的显示顺序（未列出的数据集按名称排序追加到末尾）
 DATASET_ORDER = ["LOLv2", "BDDnight"]
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
 
 def _dataset_sort_key(ds_name: str):
@@ -34,6 +35,57 @@ def normalize_dataset_name(raw_path: str) -> str:
     """将配置中的 data.path 标准化为数据集短名称。"""
     name = os.path.basename(raw_path.rstrip("/\\"))
     return DATASET_ALIASES.get(name, name)
+
+
+def resolve_validation_images(raw_path: str, data_mode: str):
+    """按训练代码的规则解析实际验证输入目录和有序文件列表。"""
+    dataset_root = Path(raw_path).expanduser()
+    if not dataset_root.is_absolute():
+        dataset_root = ROOT / dataset_root
+    dataset_root = dataset_root.resolve()
+
+    split = "val"
+    split_root = dataset_root / split
+    if not split_root.is_dir():
+        split = "test"
+        split_root = dataset_root / split
+    if not split_root.is_dir():
+        raise FileNotFoundError(
+            f"Neither 'val' nor 'test' directory exists in {dataset_root}."
+        )
+
+    subdir = "low"
+    image_root = split_root / subdir
+    if data_mode in ("pure_low_single", "pure_low_double") and not image_root.is_dir():
+        subdir = "images"
+        image_root = split_root / subdir
+    if not image_root.is_dir():
+        raise FileNotFoundError(f"validation image directory does not exist: {image_root}")
+
+    files = sorted(
+        path.name for path in image_root.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+    )
+    if not files:
+        raise ValueError(f"validation image directory is empty: {image_root}")
+    return str(dataset_root), split, subdir, files
+
+
+def resolve_optional_high(validation_root: str, split: str, low_files: list[str]):
+    """Return high files only when low/high filename stems match exactly."""
+    high_root = Path(validation_root) / split / "high"
+    if not high_root.is_dir():
+        return None, []
+    high_files = sorted(
+        path.name for path in high_root.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+    )
+    by_stem = {Path(name).stem: name for name in high_files}
+    if len(by_stem) != len(high_files) or not all(
+        Path(name).stem in by_stem for name in low_files
+    ):
+        return None, []
+    return "high", [by_stem[Path(name).stem] for name in low_files]
 
 
 def extract_loss_config(run_name: str) -> str:
@@ -95,7 +147,14 @@ for model_dir in sorted(EXP_DIR.iterdir()):
                 continue
             config = yaml.safe_load(cfg.read_text())
             dataset_path = config["data"]["path"]
+            data_mode = config["data"]["mode"]
             dataset_id = normalize_dataset_name(dataset_path)
+            validation_root, validation_split, validation_subdir, validation_files = (
+                resolve_validation_images(dataset_path, data_mode)
+            )
+            validation_high_subdir, validation_high_files = resolve_optional_high(
+                validation_root, validation_split, validation_files
+            )
             run_name = run_dir.name
             loss_cfg = extract_loss_config(run_name)
 
@@ -132,6 +191,12 @@ for model_dir in sorted(EXP_DIR.iterdir()):
             experiments.append({
                 "dataset_id":   dataset_id,
                 "dataset_path": dataset_path,
+                "validation_root": validation_root,
+                "validation_split": validation_split,
+                "validation_subdir": validation_subdir,
+                "validation_files": validation_files,
+                "validation_high_subdir": validation_high_subdir,
+                "validation_high_files": validation_high_files,
                 "model":        model,
                 "mode":         mode,
                 "loss":         loss_cfg,
@@ -149,11 +214,32 @@ datasets = {}
 for e in experiments:
     ds_id = e["dataset_id"]
     if ds_id not in datasets:
-        datasets[ds_id] = {"models": [], "test_files": [], "test_count": 0,
+        datasets[ds_id] = {"models": [],
                            "dataset_path": e["dataset_path"],  # 用于文件查找
+                           "validation_root": e["validation_root"],
+                           "validation_split": e["validation_split"],
+                           "validation_subdir": e["validation_subdir"],
+                           "validation_files": e["validation_files"],
+                           "validation_high_subdir": e["validation_high_subdir"],
+                           "validation_high_files": e["validation_high_files"],
                            "_model_idx": {}, "_mode_idx": {}}
 
     info = datasets[ds_id]
+    expected_source = (
+        info["validation_root"], info["validation_split"],
+        info["validation_subdir"], info["validation_files"],
+        info["validation_high_subdir"], info["validation_high_files"],
+    )
+    actual_source = (
+        e["validation_root"], e["validation_split"],
+        e["validation_subdir"], e["validation_files"],
+        e["validation_high_subdir"], e["validation_high_files"],
+    )
+    if actual_source != expected_source:
+        raise ValueError(
+            f"dataset alias '{ds_id}' merges runs with different validation inputs: "
+            f"{info['validation_root']} vs {e['validation_root']}"
+        )
     model = e["model"]
     mode = e["mode"]
     loss = e["loss"]
@@ -181,7 +267,7 @@ for e in experiments:
     loss_slot = mode_slot["losses"][mode_slot["_loss_idx"][loss]]
     loss_slot["runs"].append(e)
 
-# 清理临时索引 + test 文件 + all_iters
+# 清理临时索引 + validation 文件 + all_iters
 for ds_key, info in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0])):
     del info["_model_idx"]
     for model_slot in info["models"]:
@@ -189,20 +275,7 @@ for ds_key, info in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0
         for mode_slot in model_slot["modes"]:
             del mode_slot["_loss_idx"]
 
-    test_low = ROOT / info["dataset_path"] / "test" / "low"
-    if test_low.exists():
-        info["test_files"] = sorted([f.name for f in test_low.glob("*.*")])
-        info["test_subdir"] = "low"
-    else:
-        # Fallback for YOLO-format datasets (e.g., BDDnight: test/images/)
-        test_images = ROOT / info["dataset_path"] / "test" / "images"
-        if test_images.exists():
-            info["test_files"] = sorted([f.name for f in test_images.glob("*.*")])
-            info["test_subdir"] = "images"
-        else:
-            info["test_files"] = []
-            info["test_subdir"] = "low"
-    info["test_count"] = len(info["test_files"])
+    info["validation_count"] = len(info["validation_files"])
 
     all_iters = set()
     max_img_idx = -1
@@ -262,18 +335,22 @@ for ds_key in _ordered_ds_keys:
             _img_prefix = f"datasets/{os.path.basename(_raw_path)}"
     else:
         _img_prefix = _raw_path
-    # 截断 test_files：只保留 run 图片实际能覆盖的范围，避免嵌入数千无用文件名
+    # 截断 validation_files：只保留 run 图片实际能覆盖的范围，避免嵌入数千无用文件名
     _max_need = info.get("max_img_idx", -1) + 1
-    _tfiles = info["test_files"][:_max_need] if _max_need > 0 and info["test_files"] else info["test_files"]
+    _vfiles = info["validation_files"][:_max_need]
+    _hfiles = info["validation_high_files"][:_max_need]
 
     js_data[ds_key] = {
         "models":      js_models,
-        "test_count":  info["test_count"],
-        "test_files":  _tfiles,
+        "validation_count":  info["validation_count"],
+        "validation_files":  _vfiles,
+        "validation_high_files": _hfiles,
         "all_iters":   info["all_iters"],
         "dataset_path": _raw_path,
         "img_prefix":  _img_prefix,
-        "test_subdir": info.get("test_subdir", "low"),
+        "validation_split": info["validation_split"],
+        "validation_subdir": info["validation_subdir"],
+        "validation_high_subdir": info["validation_high_subdir"],
     }
 
 # ── HTML ──────────────────────────────────────────────────
@@ -332,13 +409,25 @@ th.idx {{ background: #16213e; }}
 td.idx {{ background: #1a1a2e; }}
 th.original, td.original {{
     position: sticky; left: 28px; z-index: 2;
+    width: 184px; min-width: 184px;
 }}
 th.original {{ background: #16213e; }}
 td.original {{ background: #1a1a2e; }}
+th.reference, td.reference {{
+    position: sticky; left: 212px; z-index: 2;
+    width: 184px; min-width: 184px;
+}}
+th.reference {{ background: #16213e; }}
+td.reference {{ background: #1a1a2e; }}
 
 td.original img {{ border:2px solid #e94560; }}
 td.original {{ border-right:3px solid #e94560; }}
 th.original {{ border-right:3px solid #e94560; }}
+td.reference img {{ border:2px solid #4ecdc4; }}
+table.has-high-ref td.original,
+table.has-high-ref th.original {{ border-right:0; }}
+table.has-high-ref td.reference,
+table.has-high-ref th.reference {{ border-right:3px solid #e94560; }}
 
 .info {{ padding:10px 20px; color:#888; font-size:12px; }}
 </style>
@@ -364,7 +453,8 @@ th.original {{ border-right:3px solid #e94560; }}
 <div class="table-wrap" id="content"></div>
 <div class="lightbox" id="lightbox"></div>
 <div class="info">
-  R=反射分量 L=光照分量 R×L=重建结果 | PSNR(dB)仅衡量分解重建低光图与输入的相似度，越高说明重建越接近输入
+  R=反射分量 L=光照分量 R×L=重建结果 | S-low PSNR 仅衡量重建完整性，不代表 R/L 语义正确
+  | GT high 仅在文件名严格匹配时显示，并作为正常曝光诊断参考
   | 表头: <span style="color:#e94560">网络</span>
   → <span style="color:#4ecdc4">训练方式</span>
   → <span style="color:#f0c060">损失配置</span>
@@ -415,7 +505,9 @@ function selectDS(ds) {{
                 }}
             }}
         }}
-        if (cnt > maxCount) {{ maxCount = cnt; bestIter = it; }}
+        if (cnt > maxCount || (cnt === maxCount && parseInt(it) > parseInt(bestIter))) {{
+            maxCount = cnt; bestIter = it;
+        }}
     }}
     iterSel.value = bestIter;
     currentIter = bestIter;
@@ -428,9 +520,8 @@ function selectDS(ds) {{
 
 function getEffectiveCount() {{
     const info = DATA[currentDS];
-    // 从 test_count-1 或 run 的 img_indices 中取最小值（交集），
-    // 但当 test_count=0 时（无原始图片可用），回退到 run 图片的最大索引
-    let minMax = info.test_count > 0 ? info.test_count - 1 : -1;
+    // 从 validation_count-1 或 run 的 img_indices 中取最小值（交集）。
+    let minMax = info.validation_count > 0 ? info.validation_count - 1 : -1;
     for (const model of info.models) {{
         for (const md of model.modes) {{
             for (const ls of md.losses) {{
@@ -450,7 +541,7 @@ function updateSlider() {{
     const n = getEffectiveCount();
     document.getElementById('imgSlider').max = n - 1;
     document.getElementById('imgIndex').max = n - 1;
-    document.getElementById('imgRange').textContent = `/ ${{n}} (共${{DATA[currentDS].test_count}}张)`;
+    document.getElementById('imgRange').textContent = `/ ${{n}} (共${{DATA[currentDS].validation_count}}张)`;
     if (currentIdx >= n) currentIdx = n - 1;
 }}
 
@@ -499,6 +590,8 @@ function collectColumns(info) {{
     return cols;
 }}
 
+function runWidth(col) {{ return col.mode.mode === 'paired' ? 6 : 3; }}
+
 function render() {{
     const info = DATA[currentDS];
     const idx = currentIdx;
@@ -512,14 +605,16 @@ function render() {{
     }}
 
     // ── 表头行 1: 网络 超表头 ──
-    let hdr1 = '<tr><th rowspan="3" class="idx">#</th><th rowspan="3" class="original">原始 Input</th>';
+    const hasHighRef = info.validation_high_files && info.validation_high_files.length > 0;
+    let hdr1 = '<tr><th rowspan="3" class="idx">#</th><th rowspan="3" class="original">Input low</th>';
+    if (hasHighRef) hdr1 += '<th rowspan="3" class="reference">GT high<br><small>diagnostic</small></th>';
     for (let ci = 0; ci < cols.length; ci++) {{
         const col = cols[ci];
         if (col.isFirstInModel) {{
-            let span = 1;
-            for (let cj = ci + 1; cj < cols.length && cols[cj].model === col.model; cj++) span++;
+            let span = 0;
+            for (let cj = ci; cj < cols.length && cols[cj].model === col.model; cj++) span += runWidth(cols[cj]);
             const sep = ci > 0 ? ' sep-model' : '';
-            hdr1 += `<th class="model-hdr${{sep}}" colspan="${{span * 3}}">${{col.model.model}}</th>`;
+            hdr1 += `<th class="model-hdr${{sep}}" colspan="${{span}}">${{col.model.model}}</th>`;
         }}
     }}
     hdr1 += '</tr>';
@@ -532,7 +627,7 @@ function render() {{
         if (col.isFirstInModel && ci > 0) sepCls = ' sep-model';
         else if (col.isFirstInMode && ci > 0 && !col.isFirstInModel) sepCls = ' sep-mode';
         const label = col.mode.mode + ' · ' + col.loss.loss_short;
-        hdr2 += `<th class="mode-hdr${{sepCls}}" colspan="3" title="${{label}}"><span class="mode-label">${{col.mode.mode}}</span><br><span class="loss-label">${{col.loss.loss_short}}</span><br><span class="psnr">${{col.run.psnr}}dB</span></th>`;
+        hdr2 += `<th class="mode-hdr${{sepCls}}" colspan="${{runWidth(col)}}" title="${{label}}"><span class="mode-label">${{col.mode.mode}}</span><br><span class="loss-label">${{col.loss.loss_short}}</span><br><span class="psnr">S-low ${{col.run.psnr}}dB</span></th>`;
     }}
     hdr2 += '</tr>';
 
@@ -543,11 +638,15 @@ function render() {{
         let sepCls = '';
         if (col.isFirstInModel && ci > 0) sepCls = ' sep-model';
         else if (col.isFirstInMode && ci > 0 && !col.isFirstInModel) sepCls = ' sep-mode';
-        hdr3 += `<th${{sepCls}} style="font-size:10px;color:#aaa">R</th><th style="font-size:10px;color:#aaa">L</th><th style="font-size:10px;color:#aaa">重建R×L</th>`;
+        if (col.mode.mode === 'paired') {{
+            hdr3 += `<th class="${{sepCls}}" style="font-size:10px;color:#aaa">R low</th><th style="font-size:10px;color:#aaa">R high</th><th style="font-size:10px;color:#aaa">L low</th><th style="font-size:10px;color:#aaa">L high</th><th style="font-size:10px;color:#aaa">S low</th><th style="font-size:10px;color:#aaa">S high</th>`;
+        }} else {{
+            hdr3 += `<th class="${{sepCls}}" style="font-size:10px;color:#aaa">R low</th><th style="font-size:10px;color:#aaa">L low</th><th style="font-size:10px;color:#aaa">S low</th>`;
+        }}
     }}
     hdr3 += '</tr>';
 
-    let html = '<table><thead>' + hdr1 + hdr2 + hdr3 + '</thead><tbody>';
+    let html = `<table class="${{hasHighRef ? 'has-high-ref' : 'no-high-ref'}}"><thead>` + hdr1 + hdr2 + hdr3 + '</thead><tbody>';
 
     const ROWS = 5;
     const maxDisplay = getEffectiveCount() - 1;
@@ -558,8 +657,12 @@ function render() {{
     if (end - start + 1 < ROWS) {{ start = Math.max(0, end - ROWS + 1); }}
     for (let i = start; i <= end; i++) {{
         html += `<tr><td class="idx" style="font-size:11px;color:#888">${{i}}</td>`;
-        const origFile = info.test_files[i] || '';
-        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/test/${{info.test_subdir}}/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
+        const origFile = info.validation_files[i] || '';
+        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/${{info.validation_split}}/${{info.validation_subdir}}/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
+        if (hasHighRef) {{
+            const highFile = info.validation_high_files[i] || '';
+            html += `<td class="reference"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/${{info.validation_split}}/${{info.validation_high_subdir}}/${{encodeURI(highFile)}}" onerror="this.style.display='none'"></td>`;
+        }}
         for (let ci = 0; ci < cols.length; ci++) {{
             const col = cols[ci];
             const r = col.run;
@@ -567,9 +670,18 @@ function render() {{
             let sepCls = '';
             if (col.isFirstInModel && ci > 0) sepCls = ' sep-model';
             else if (col.isFirstInMode && ci > 0 && !col.isFirstInModel) sepCls = ' sep-mode';
-            html += `<td class="${{sepCls}}"><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_low.png" onerror="this.style.display='none'"></td>`;
-            html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_low.png" onerror="this.style.display='none'"></td>`;
-            html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_low.png" onerror="this.style.display='none'"></td>`;
+            if (col.mode.mode === 'paired') {{
+                html += `<td class="${{sepCls}}"><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_low.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_high.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_low.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_high.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_low.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_high.png" onerror="this.style.display='none'"></td>`;
+            }} else {{
+                html += `<td class="${{sepCls}}"><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_low.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_low.png" onerror="this.style.display='none'"></td>`;
+                html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_low.png" onerror="this.style.display='none'"></td>`;
+            }}
         }}
         html += '</tr>';
     }}
@@ -600,4 +712,7 @@ print(f"生成: {out}")
 print(f"数据集: {list(datasets.keys())}")
 for ds, info in datasets.items():
     n_runs = sum(1 for m in info["models"] for md in m["modes"] for ls in md["losses"] for _ in ls["runs"])
-    print(f"  {ds}: {len(info['models'])} models, {n_runs} runs, {info['test_count']} test images")
+    print(
+        f"  {ds}: {len(info['models'])} models, {n_runs} runs, "
+        f"{info['validation_count']} {info['validation_split']} images"
+    )

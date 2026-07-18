@@ -9,6 +9,7 @@
 # 环境变量（可选）:
 #   RETINEX_SYNTH_MAX_ITER    最大迭代轮次 (默认 100000)
 #   RETINEX_SYNTH_EXP_DIR     实验根目录 (默认 ./experiments)
+#   RETINEX_ANALYZE_ITER      分解分析迭代 (默认 10000；设为 all 分析全部)
 #   PYTHON_BIN                Python 解释器 (默认 .venv/bin/python3，回退 python3)
 # ============================================================
 
@@ -68,14 +69,20 @@ echo ""
 echo "▶ [5/5] analyze_decomposition — R/L 分解统计诊断"
 echo "────────────────────────────────────────────────────────────"
 
-FORCE_FLAG=""
+ANALYZE_ARGS=()
 if [ "${RETINEX_FORCE_ANALYZE:-0}" = "1" ]; then
-    FORCE_FLAG="--force"
+    ANALYZE_ARGS+=(--force)
     echo "  (强制模式：忽略已有报告)"
+fi
+ANALYZE_ITER="${RETINEX_ANALYZE_ITER:-10000}"
+if [ "$ANALYZE_ITER" != "all" ]; then
+    ANALYZE_ARGS+=(--iteration "$ANALYZE_ITER")
+    echo "  (统一分析 iteration=$ANALYZE_ITER)"
 fi
 
 ANALYZE_COUNT=0
 ANALYZE_SKIP_COUNT=0
+ANALYZE_FAIL_COUNT=0
 for model_dir in "$ROOT_DIR/experiments"/*/; do
     [ -d "$model_dir" ] || continue
     for mode_dir in "$model_dir"/*/; do
@@ -86,8 +93,16 @@ for model_dir in "$ROOT_DIR/experiments"/*/; do
                 ANALYZE_COUNT=$((ANALYZE_COUNT + 1))
                 rel="${run_dir#$ROOT_DIR/experiments/}"
                 echo "[$ANALYZE_COUNT] $rel"
-                output=$("$PYTHON" "$SCRIPT_DIR/analyze_decomposition.py" $FORCE_FLAG "$run_dir" 2>&1) || true
+                if output=$("$PYTHON" "$SCRIPT_DIR/analyze_decomposition.py" "${ANALYZE_ARGS[@]}" "$run_dir" 2>&1); then
+                    status=0
+                else
+                    status=$?
+                    ANALYZE_FAIL_COUNT=$((ANALYZE_FAIL_COUNT + 1))
+                fi
                 echo "$output"
+                if [ "${status:-0}" -ne 0 ]; then
+                    echo "[ERROR] analyze_decomposition failed with status $status: $rel"
+                fi
                 if echo "$output" | grep -q "\[SKIP\]"; then
                     ANALYZE_SKIP_COUNT=$((ANALYZE_SKIP_COUNT + 1))
                 fi
@@ -100,10 +115,15 @@ if [ "$ANALYZE_COUNT" -eq 0 ]; then
     echo "⚠ 没有找到包含 img/ 和 config.yaml 的实验目录，跳过。"
 else
     if [ "$ANALYZE_SKIP_COUNT" -gt 0 ]; then
-        echo "✓ 步骤 5 完成（共 $ANALYZE_COUNT 个实验，跳过 $ANALYZE_SKIP_COUNT 个已有报告，实际分析 $((ANALYZE_COUNT - ANALYZE_SKIP_COUNT)) 个）"
+        echo "✓ 步骤 5 完成（共 $ANALYZE_COUNT 个实验，跳过 $ANALYZE_SKIP_COUNT 个已有报告，失败 $ANALYZE_FAIL_COUNT 个）"
     else
         echo "✓ 步骤 5 完成（分析了 $ANALYZE_COUNT 个实验）"
     fi
+fi
+
+if [ "$ANALYZE_FAIL_COUNT" -gt 0 ]; then
+    echo "分析存在 $ANALYZE_FAIL_COUNT 个失败实验；流水线返回非零状态。"
+    exit 1
 fi
 
 # ── 完成 ────────────────────────────────────────────────────

@@ -1,139 +1,249 @@
 #!/usr/bin/env python3
-"""
-Retinex R/L 分解结果诊断工具。
+"""Analyze saved Retinex decompositions with mode-appropriate metrics.
 
-用途：
-    分析指定实验 ``img/<iteration>/`` 中保存的验证集分解图，统计 R 的
-    均值、标准差、饱和率和梯度强度，以及 L 的 total variation。对于
-    ``data.mode: paired`` 实验，如果同时保存了 high 分解，还会计算同场景
-    R_low/R_high 的 L1 和 PSNR 一致性；其他训练模式只分析 low。
+The report deliberately separates three questions:
 
-输入文件命名：
-    <index>_R_low.png、<index>_L_low.png
-    paired 可额外包含 <index>_R_high.png、<index>_L_high.png
+* reconstruction: does ``R * L`` reproduce the input?
+* paired consistency: are ``R_low`` and ``R_high`` alike?
+* high-reference fidelity: is ``R_low`` close to the matched normal-light image?
 
-输出：
-    默认在实验根目录生成 ``decomposition_analysis.txt``。添加 ``--details``
-    时额外生成 ``decomposition_analysis_details.csv``，用于定位单张异常图。
-
-用法：
-    # 使用完整实验路径，分析 img 下全部迭代
-    .venv/bin/python _compare/analyze_decomposition.py \
-        experiments/RetinexPixelTrans/paired/<run>
-
-    # 使用指定实验根目录，只分析 iteration 10000
-    .venv/bin/python _compare/analyze_decomposition.py <run-name> \
-        --experiments-dir experiments/RetinexPixelTrans/paired \
-        --iteration 10000
-
-    # 额外保存逐图片指标
-    .venv/bin/python _compare/analyze_decomposition.py <实验目录> \
-        --iteration 10000 --details
+The last metric is available for paired data and, as an explicitly diagnostic
+reference, for pure-low-single data whose validation low/high filenames match
+exactly.  A normal-light photograph is not claimed to be reflectance ground
+truth.  Pure-low datasets without matched high images remain fully supported
+through no-reference decomposition diagnostics.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import math
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import NamedTuple
 
 import cv2
 import numpy as np
 import yaml
+from skimage.metrics import structural_similarity
 
 
 DEFAULT_PREFIX = "decomposition_analysis"
-DOMAINS = ("low", "high")
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+ANALYSIS_VERSION = 2
+
+
+class InputRecord(NamedTuple):
+    low: Path
+    high: Path | None = None
+    center_crop: int | None = None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("experiment", help="experiment run directory or relative run name")
     parser.add_argument(
-        "experiment",
-        help="实验 run 目录，或相对于 --experiments-dir 的目录名",
+        "--experiments-dir", type=Path, default=Path("experiments"),
+        help="root used when experiment is a relative run name",
     )
     parser.add_argument(
-        "--experiments-dir",
-        type=Path,
-        default=Path("experiments"),
-        help="experiment 使用相对名称时的根目录（默认：experiments）",
+        "--iteration", type=int, action="append",
+        help="analyze only this iteration; repeatable (default: every numeric img directory)",
     )
-    parser.add_argument(
-        "--iteration",
-        type=int,
-        action="append",
-        help="只分析指定迭代；可重复传入。默认分析 img 下全部数字目录",
-    )
-    parser.add_argument(
-        "--output-prefix",
-        default=DEFAULT_PREFIX,
-        help=f"输出文件名前缀（默认：{DEFAULT_PREFIX}）",
-    )
-    parser.add_argument(
-        "--details",
-        action="store_true",
-        help="额外输出逐图片指标 CSV；默认只生成文本汇总",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="强制重新分析，即使已有报告且比源图片更新",
-    )
+    parser.add_argument("--output-prefix", default=DEFAULT_PREFIX)
+    parser.add_argument("--details", action="store_true", help="write per-image CSV")
+    parser.add_argument("--force", action="store_true", help="ignore freshness cache")
     return parser.parse_args()
 
 
 def resolve_experiment(value: str, experiments_dir: Path) -> Path:
     direct = Path(value).expanduser()
-    candidates = (direct, experiments_dir.expanduser() / value)
-    for candidate in candidates:
+    for candidate in (direct, experiments_dir.expanduser() / value):
         if candidate.is_dir():
             return candidate.resolve()
-    attempted = ", ".join(str(path) for path in candidates)
-    raise FileNotFoundError(f"找不到实验目录，已尝试：{attempted}")
+    raise FileNotFoundError(
+        "experiment directory not found; tried: "
+        + ", ".join(str(path) for path in (direct, experiments_dir / value))
+    )
 
 
 def load_config(experiment_dir: Path) -> dict:
-    config_path = experiment_dir / "config.yaml"
-    if not config_path.is_file():
-        raise FileNotFoundError(f"实验缺少 config.yaml：{config_path}")
-    with config_path.open("r", encoding="utf-8") as handle:
-        config = yaml.safe_load(handle) or {}
-    return config
+    path = experiment_dir / "config.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(f"missing config.yaml: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
 
 
 def find_iteration_dirs(experiment_dir: Path, selected: list[int] | None) -> list[Path]:
-    image_root = experiment_dir / "img"
-    if not image_root.is_dir():
-        raise FileNotFoundError(f"实验缺少 img 目录：{image_root}")
-
+    root = experiment_dir / "img"
+    if not root.is_dir():
+        raise FileNotFoundError(f"missing img directory: {root}")
     directories = {
-        int(path.name): path
-        for path in image_root.iterdir()
+        int(path.name): path for path in root.iterdir()
         if path.is_dir() and path.name.isdigit()
     }
     if selected:
         missing = sorted(set(selected) - directories.keys())
         if missing:
-            raise FileNotFoundError(f"找不到迭代目录：{missing}")
+            raise FileNotFoundError(f"missing iteration directories: {missing}")
         return [directories[value] for value in sorted(set(selected))]
     if not directories:
-        raise FileNotFoundError(f"img 下没有数字迭代目录：{image_root}")
+        raise FileNotFoundError(f"no numeric iteration directory below: {root}")
     return [directories[value] for value in sorted(directories)]
+
+
+def _image_files(directory: Path, required: bool = True) -> list[Path]:
+    if not directory.is_dir():
+        if required:
+            raise FileNotFoundError(f"image directory does not exist: {directory}")
+        return []
+    files = sorted(
+        path for path in directory.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+    if required and not files:
+        raise ValueError(f"image directory is empty: {directory}")
+    return files
+
+
+def _pair_by_stem(low_files: list[Path], high_files: list[Path]) -> list[InputRecord]:
+    def index(paths: list[Path], domain: str) -> dict[str, Path]:
+        result: dict[str, Path] = {}
+        for path in paths:
+            if path.stem in result:
+                raise ValueError(f"duplicate {domain} stem: {path.stem}")
+            result[path.stem] = path
+        return result
+
+    low = index(low_files, "low")
+    high = index(high_files, "high")
+    if low.keys() != high.keys():
+        raise ValueError(
+            "paired validation filenames do not match: "
+            f"missing high={sorted(low.keys() - high.keys())[:10]}, "
+            f"missing low={sorted(high.keys() - low.keys())[:10]}"
+        )
+    return [InputRecord(low[stem], high[stem]) for stem in sorted(low)]
+
+
+def resolve_validation_records(experiment_dir: Path, config: dict) -> list[InputRecord]:
+    """Resolve the full-resolution validation order used by training."""
+    data = config.get("data", {})
+    mode = str(data.get("mode", "unknown"))
+    dataset_root = Path(str(data.get("path", ""))).expanduser()
+    if not dataset_root.is_absolute():
+        dataset_root = (experiment_dir.parents[3] / dataset_root).resolve()
+    split_root = dataset_root / "val"
+    if not split_root.is_dir():
+        split_root = dataset_root / "test"
+    if not split_root.is_dir():
+        raise FileNotFoundError(f"dataset has neither val nor test split: {dataset_root}")
+
+    low_root = split_root / "low"
+    if mode in {"pure_low_single", "pure_low_double"} and not low_root.is_dir():
+        low_root = split_root / "images"
+    low_files = _image_files(low_root)
+    high_files = _image_files(split_root / "high", required=False)
+
+    if mode == "paired":
+        if not high_files:
+            raise FileNotFoundError(f"paired validation lacks high images: {split_root / 'high'}")
+        return _pair_by_stem(low_files, high_files)
+
+    # A matched high image is optional diagnostic information for pure-low-single.
+    # It is used only if every filename matches exactly; partial/positional pairing
+    # would silently create invalid metrics and is therefore rejected by omission.
+    optional_high: dict[str, Path] = {}
+    if mode == "pure_low_single" and high_files:
+        high_by_stem = {path.stem: path for path in high_files}
+        if len(high_by_stem) == len(high_files) and all(
+            path.stem in high_by_stem for path in low_files
+        ):
+            optional_high = high_by_stem
+    return [InputRecord(path, optional_high.get(path.stem)) for path in low_files]
+
+
+def _manifest_records(experiment_dir: Path, full_records: list[InputRecord]) -> list[InputRecord]:
+    manifest = experiment_dir / "quick_val_manifest.txt"
+    if not manifest.is_file():
+        return []
+    by_low = {str(record.low.resolve()): record for record in full_records}
+    crop_size: int | None = None
+    selected: list[InputRecord] = []
+    for raw in manifest.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("crop_size:"):
+            value = int(line.split(":", 1)[1].strip())
+            crop_size = value if value > 0 else None
+        elif line and not ":" in line:
+            key = str(Path(line).expanduser().resolve())
+            if key not in by_low:
+                raise ValueError(f"quick validation manifest path is not in validation set: {line}")
+            base = by_low[key]
+            selected.append(InputRecord(base.low, base.high, crop_size))
+    return selected
+
+
+def records_for_iteration(
+    experiment_dir: Path,
+    iteration_dir: Path,
+    full_records: list[InputRecord],
+) -> list[InputRecord]:
+    """Choose full or quick validation records without positional guessing."""
+    report_path = experiment_dir / "final_full_validation.yaml"
+    if report_path.is_file():
+        report = yaml.safe_load(report_path.read_text(encoding="utf-8")) or {}
+        published = report.get("published_image_dir")
+        if published and (experiment_dir / str(published)).resolve() == iteration_dir.resolve():
+            return full_records
+
+    quick_records = _manifest_records(experiment_dir, full_records)
+    if quick_records:
+        return quick_records
+    return full_records
 
 
 def read_image(path: Path, grayscale: bool = False) -> np.ndarray:
     flag = cv2.IMREAD_GRAYSCALE if grayscale else cv2.IMREAD_COLOR
     image = cv2.imread(str(path), flag)
     if image is None:
-        raise OSError(f"无法读取图像：{path}")
+        raise OSError(f"cannot read image: {path}")
     return image.astype(np.float32) / 255.0
 
 
+def gray(image: np.ndarray) -> np.ndarray:
+    if image.ndim == 2:
+        return image
+    # Saved/input images are BGR because cv2 is used consistently.
+    return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
+def center_crop(image: np.ndarray, size: int) -> np.ndarray:
+    height, width = image.shape[:2]
+    if size > height or size > width:
+        raise ValueError(f"center crop {size} exceeds image shape {image.shape}")
+    top = (height - size) // 2
+    left = (width - size) // 2
+    return image[top:top + size, left:left + size, ...]
+
+
+def align_input(image: np.ndarray, output_shape: tuple[int, int], crop: int | None) -> np.ndarray:
+    if image.shape[:2] == output_shape:
+        return image
+    if crop is not None:
+        image = center_crop(image, crop)
+    if image.shape[:2] != output_shape:
+        raise ValueError(
+            f"saved output shape {output_shape} does not match validation input {image.shape[:2]}"
+        )
+    return image
+
+
 def total_variation(image: np.ndarray) -> float:
-    """相邻像素绝对差的横向均值与纵向均值之和。"""
     terms = []
     if image.shape[1] > 1:
         terms.append(float(np.abs(image[:, 1:, ...] - image[:, :-1, ...]).mean()))
@@ -142,15 +252,59 @@ def total_variation(image: np.ndarray) -> float:
     return sum(terms)
 
 
+def pearson(a: np.ndarray, b: np.ndarray) -> float:
+    a = a.reshape(-1).astype(np.float64)
+    b = b.reshape(-1).astype(np.float64)
+    a -= a.mean()
+    b -= b.mean()
+    denominator = np.linalg.norm(a) * np.linalg.norm(b)
+    return 0.0 if denominator < 1e-12 else float(np.dot(a, b) / denominator)
+
+
+def psnr(a: np.ndarray, b: np.ndarray) -> float:
+    mse = float(np.mean((a - b) ** 2))
+    return 100.0 if mse == 0 else 10.0 * math.log10(1.0 / mse)
+
+
+def ssim(a: np.ndarray, b: np.ndarray) -> float:
+    minimum = min(a.shape[0], a.shape[1])
+    win_size = min(7, minimum if minimum % 2 else minimum - 1)
+    if win_size < 3:
+        return float("nan")
+    return float(structural_similarity(
+        a, b, channel_axis=2 if a.ndim == 3 else None,
+        data_range=1.0, win_size=win_size,
+    ))
+
+
+def chroma(image: np.ndarray) -> np.ndarray:
+    return image / np.maximum(image.sum(axis=2, keepdims=True), 1e-4)
+
+
+def comparison_metrics(
+    a: np.ndarray, b: np.ndarray, prefix: str, include_ssim: bool = False,
+) -> dict[str, float]:
+    difference = a - b
+    result = {
+        f"{prefix}_l1": float(np.abs(difference).mean()),
+        f"{prefix}_psnr": psnr(a, b),
+    }
+    if include_ssim:
+        result[f"{prefix}_ssim"] = ssim(a, b)
+    return result
+
+
 def reflectance_metrics(reflectance: np.ndarray, prefix: str) -> dict[str, float]:
+    reflectance_gray = gray(reflectance)
     return {
         f"{prefix}_mean": float(reflectance.mean()),
         f"{prefix}_std": float(reflectance.std()),
+        f"{prefix}_gray_std": float(reflectance_gray.std()),
         f"{prefix}_sat_black_001": float((reflectance < 0.01).mean()),
         f"{prefix}_sat_white_099": float((reflectance > 0.99).mean()),
         f"{prefix}_dark_005": float((reflectance < 0.05).mean()),
         f"{prefix}_bright_095": float((reflectance > 0.95).mean()),
-        f"{prefix}_gradient": total_variation(reflectance),
+        f"{prefix}_gradient": total_variation(reflectance_gray),
     }
 
 
@@ -158,25 +312,24 @@ def illumination_metrics(illumination: np.ndarray, prefix: str) -> dict[str, flo
     return {
         f"{prefix}_mean": float(illumination.mean()),
         f"{prefix}_std": float(illumination.std()),
+        f"{prefix}_dark_005": float((illumination < 0.05).mean()),
+        f"{prefix}_bright_095": float((illumination > 0.95).mean()),
         f"{prefix}_tv": total_variation(illumination),
     }
 
 
 def consistency_metrics(r_low: np.ndarray, r_high: np.ndarray) -> dict[str, float]:
     if r_low.shape != r_high.shape:
-        raise ValueError(
-            f"R_low/R_high 尺寸不同：low={r_low.shape}, high={r_high.shape}"
-        )
-    difference = r_low - r_high
-    mse = float(np.mean(difference * difference))
-    return {
-        "r_consistency_l1": float(np.abs(difference).mean()),
-        "r_consistency_psnr": 100.0 if mse == 0 else 10.0 * math.log10(1.0 / mse),
-    }
+        raise ValueError(f"R_low/R_high shape mismatch: {r_low.shape} vs {r_high.shape}")
+    result = comparison_metrics(r_low, r_high, "r_consistency", include_ssim=True)
+    result["r_consistency_chroma_l1"] = float(
+        np.abs(chroma(r_low) - chroma(r_high)).mean()
+    )
+    return result
 
 
 def indexed_paths(iteration_dir: Path, suffix: str) -> dict[int, Path]:
-    result = {}
+    result: dict[int, Path] = {}
     marker = f"_{suffix}"
     for path in iteration_dir.glob(f"*_{suffix}.png"):
         index_text = path.stem.removesuffix(marker)
@@ -184,30 +337,67 @@ def indexed_paths(iteration_dir: Path, suffix: str) -> dict[int, Path]:
             continue
         index = int(index_text)
         if index in result:
-            raise ValueError(f"重复的图像序号 {index}：{iteration_dir}")
+            raise ValueError(f"duplicate image index {index}: {iteration_dir}")
         result[index] = path
     return result
 
 
-def analyze_iteration(iteration_dir: Path, paired: bool) -> tuple[list[dict], list[str]]:
-    warnings = []
+def anchor_diagnostics(
+    illumination: np.ndarray,
+    input_low: np.ndarray,
+    anchor_version: str,
+    l_type: str,
+) -> tuple[float, float]:
+    """Return target summary and the exact per-image training anchor loss."""
+    prediction = float(illumination.mean())
+    if l_type == "point":
+        if anchor_version == "v1":
+            target_map = input_low.max(axis=2)
+            return float(target_map.mean()), float(np.abs(prediction - target_map).mean())
+        target = float(input_low.max())
+    elif l_type == "pixel":
+        target = (
+            float(input_low.max(axis=2).mean())
+            if anchor_version == "v1" else float(input_low.mean())
+        )
+    else:
+        raise ValueError(f"unknown L type for anchor diagnostics: {l_type}")
+    return target, abs(prediction - target)
+
+
+def analyze_iteration(
+    iteration_dir: Path,
+    paired: bool = False,
+    input_records: list[InputRecord] | None = None,
+    mode: str | None = None,
+    anchor_version: str = "v2",
+    l_type: str = "pixel",
+) -> tuple[list[dict], list[str]]:
+    """Analyze one saved iteration.
+
+    ``paired`` is retained for compatibility with existing callers.  New callers
+    should also pass ``mode`` and ``input_records`` to enable reference metrics.
+    """
+    mode = mode or ("paired" if paired else "unknown")
+    paired = paired or mode == "paired"
+    warnings: list[str] = []
     paths = {
         (component, domain): indexed_paths(iteration_dir, f"{component}_{domain}")
-        for component in ("R", "L")
-        for domain in DOMAINS
+        for component in ("R", "L") for domain in ("low", "high")
     }
-
     low_indices = set(paths[("R", "low")])
     missing_low_l = sorted(low_indices - set(paths[("L", "low")]))
     if missing_low_l:
-        raise FileNotFoundError(
-            f"iter {iteration_dir.name} 缺少 L_low，序号：{missing_low_l[:10]}"
-        )
+        raise FileNotFoundError(f"iter {iteration_dir.name} missing L_low: {missing_low_l[:10]}")
     if not low_indices:
-        warnings.append(
-            f"iter {iteration_dir.name}: 目录为空，没有 *_R_low.png，跳过"
+        return [], [f"iter {iteration_dir.name}: no *_R_low.png"]
+    if low_indices != set(range(max(low_indices) + 1)):
+        raise ValueError(f"iter {iteration_dir.name} has non-contiguous output indices")
+    if input_records is not None and max(low_indices) >= len(input_records):
+        raise ValueError(
+            f"iter {iteration_dir.name} has {max(low_indices)+1} outputs but only "
+            f"{len(input_records)} validation records"
         )
-        return [], warnings
 
     high_indices = set(paths[("R", "high")])
     if paired:
@@ -215,57 +405,134 @@ def analyze_iteration(iteration_dir: Path, paired: bool) -> tuple[list[dict], li
         missing_high_l = sorted(high_indices - set(paths[("L", "high")]))
         if missing_high:
             warnings.append(
-                f"iter {iteration_dir.name}: paired 结果缺少 {len(missing_high)} 张 R_high；"
-                "这些样本不计算 low/high 一致性"
+                f"iter {iteration_dir.name}: paired results miss {len(missing_high)} R_high images"
             )
         if missing_high_l:
             warnings.append(
-                f"iter {iteration_dir.name}: 缺少 {len(missing_high_l)} 张 L_high"
+                f"iter {iteration_dir.name}: results miss {len(missing_high_l)} L_high images"
             )
 
-    rows = []
+    rows: list[dict] = []
     for index in sorted(low_indices):
-        row: dict[str, int | float] = {
-            "iteration": int(iteration_dir.name),
-            "image_index": index,
-        }
         r_low = read_image(paths[("R", "low")][index])
         l_low = read_image(paths[("L", "low")][index], grayscale=True)
+        if r_low.shape[:2] != l_low.shape:
+            raise ValueError(f"R_low/L_low shape mismatch at index {index}")
+        row: dict[str, int | float | str] = {
+            "iteration": int(iteration_dir.name), "image_index": index,
+        }
         row.update(reflectance_metrics(r_low, "r_low"))
         row.update(illumination_metrics(l_low, "l_low"))
 
-        # high 只有 paired 才具有同场景语义；其他模式即使遗留同名文件也忽略。
+        input_low: np.ndarray | None = None
+        input_high: np.ndarray | None = None
+        if input_records is not None:
+            record = input_records[index]
+            row["input_low_file"] = record.low.name
+            input_low = align_input(read_image(record.low), r_low.shape[:2], record.center_crop)
+            input_gray = gray(input_low)
+            input_tv = total_variation(input_gray)
+            row.update({
+                "input_low_mean": float(input_low.mean()),
+                "input_low_gray_std": float(input_gray.std()),
+                "input_low_tv": input_tv,
+                "r_low_mean_gain_vs_input": float(r_low.mean()) / max(float(input_low.mean()), 1e-8),
+                "r_low_contrast_gain_vs_input": float(gray(r_low).std()) / max(float(input_gray.std()), 1e-8),
+                "r_low_tv_to_input": total_variation(gray(r_low)) / max(input_tv, 1e-8),
+                "r_low_input_gray_corr": pearson(gray(r_low), input_gray),
+                "r_low_input_chroma_l1": float(np.abs(chroma(r_low) - chroma(input_low)).mean()),
+                "l_low_tv_to_input": total_variation(l_low) / max(input_tv, 1e-8),
+                "l_low_input_gray_corr": pearson(l_low, input_gray),
+            })
+            synthesis_low = np.clip(r_low * l_low[..., None], 0.0, 1.0)
+            row.update(comparison_metrics(synthesis_low, input_low, "self_low"))
+            if mode == "pure_low_single":
+                target, anchor_error = anchor_diagnostics(
+                    l_low, input_low, anchor_version, l_type
+                )
+                row["anchor_target"] = target
+                row["anchor_abs_error"] = anchor_error
+            if record.high is not None:
+                input_high = align_input(
+                    read_image(record.high), r_low.shape[:2], record.center_crop
+                )
+                row["input_high_file"] = record.high.name
+                row["input_high_mean"] = float(input_high.mean())
+                row.update(comparison_metrics(
+                    input_low, input_high, "input_low_highref", include_ssim=True
+                ))
+                row.update(comparison_metrics(
+                    r_low, input_high, "r_low_highref", include_ssim=True
+                ))
+                high_gray = gray(input_high)
+                row.update({
+                    "r_low_highref_mean_ratio": float(r_low.mean()) / max(float(input_high.mean()), 1e-8),
+                    "r_low_highref_overbright_010": float((gray(r_low) > high_gray + 0.1).mean()),
+                    "r_low_highref_chroma_l1": float(np.abs(chroma(r_low) - chroma(input_high)).mean()),
+                    "r_low_highref_gray_corr": pearson(gray(r_low), high_gray),
+                    "r_low_highref_psnr_gain_vs_input": (
+                        row["r_low_highref_psnr"] - row["input_low_highref_psnr"]
+                    ),
+                })
+
         if paired and index in high_indices:
             r_high = read_image(paths[("R", "high")][index])
             row.update(reflectance_metrics(r_high, "r_high"))
             row.update(consistency_metrics(r_low, r_high))
             if index in paths[("L", "high")]:
                 l_high = read_image(paths[("L", "high")][index], grayscale=True)
+                if l_high.shape != r_high.shape[:2]:
+                    raise ValueError(f"R_high/L_high shape mismatch at index {index}")
                 row.update(illumination_metrics(l_high, "l_high"))
+                if input_high is not None:
+                    high_gray = gray(input_high)
+                    high_tv = total_variation(high_gray)
+                    row.update({
+                        "l_high_tv_to_input": total_variation(l_high) / max(high_tv, 1e-8),
+                        "l_high_input_gray_corr": pearson(l_high, high_gray),
+                    })
+                    synthesis_high = np.clip(r_high * l_high[..., None], 0.0, 1.0)
+                    row.update(comparison_metrics(synthesis_high, input_high, "self_high"))
+                    row.update(comparison_metrics(r_high, input_high, "r_high_highref"))
+                    cross_low = np.clip(r_high * l_low[..., None], 0.0, 1.0)
+                    cross_high = np.clip(r_low * l_high[..., None], 0.0, 1.0)
+                    row.update(comparison_metrics(cross_low, input_low, "cross_low"))
+                    row.update(comparison_metrics(cross_high, input_high, "cross_high"))
         rows.append(row)
     return rows, warnings
+
+
+def _finite(values: list[float]) -> np.ndarray:
+    array = np.asarray(values, dtype=np.float64)
+    return array[np.isfinite(array)]
 
 
 def summarize(rows: list[dict]) -> list[dict]:
     by_iteration: dict[int, list[dict]] = defaultdict(list)
     for row in rows:
         by_iteration[int(row["iteration"])].append(row)
-
-    summaries = []
+    summaries: list[dict] = []
     for iteration, iteration_rows in sorted(by_iteration.items()):
         summary: dict[str, int | float] = {
             "iteration": iteration,
             "n_low": len(iteration_rows),
             "n_paired": sum("r_consistency_l1" in row for row in iteration_rows),
+            "n_highref": sum("r_low_highref_l1" in row for row in iteration_rows),
         }
-        keys = sorted(
-            set().union(*(row.keys() for row in iteration_rows))
-            - {"iteration", "image_index"}
-        )
+        keys = sorted(set().union(*(row.keys() for row in iteration_rows)))
         for key in keys:
-            values = [float(row[key]) for row in iteration_rows if key in row]
-            summary[f"{key}_mean"] = float(np.mean(values))
-            summary[f"{key}_std"] = float(np.std(values))
+            if key in {"iteration", "image_index", "input_low_file", "input_high_file"}:
+                continue
+            values = _finite([float(row[key]) for row in iteration_rows if key in row])
+            if not len(values):
+                continue
+            stats = {
+                "mean": values.mean(), "std": values.std(),
+                "p05": np.quantile(values, 0.05), "median": np.quantile(values, 0.5),
+                "p95": np.quantile(values, 0.95), "min": values.min(), "max": values.max(),
+            }
+            for stat, value in stats.items():
+                summary[f"{key}_{stat}"] = float(value)
         summaries.append(summary)
     return summaries
 
@@ -278,116 +545,177 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def is_analysis_fresh(report_path: Path, img_dir: Path) -> bool:
-    """报告是否存在且比 img/ 下所有 PNG 更新。"""
-    if not report_path.is_file():
-        return False
-    report_mtime = report_path.stat().st_mtime
-    newest_png_mtime = 0.0
-    for png in img_dir.rglob("*.png"):
-        newest_png_mtime = max(newest_png_mtime, png.stat().st_mtime)
-    return newest_png_mtime > 0 and newest_png_mtime <= report_mtime
-
-
-def read_summary_from_report(report_path: Path) -> str:
-    """从已有报告中提取第一条数据行的关键指标，用于 SKIP 摘要。"""
-    for line in report_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # 表头行以 "iter" 开头，数据行以数字开头
-        parts = line.split()
-        if parts and parts[0].isdigit():
-            # 列: iter, n, paired, Rlow_mean, Rlow_std, Rlow_>0.95, Rlow_grad, Llow_TV, R_LH_L1, R_LH_PSNR
-            cols = "  ".join(parts[:8])  # 取前 8 列（到 Llow_TV）
-            if len(parts) >= 10:
-                cols += f"  Rconsist_PSNR={parts[9]}"
-            return cols
-    return "-"
-
-
-def write_report(
-    path: Path,
-    experiment_dir: Path,
-    mode: str,
-    summaries: list[dict],
-    warnings: list[str],
-) -> None:
-    lines = [
-        f"# Retinex decomposition analysis: {experiment_dir.name}",
-        f"mode: {mode}",
-        "",
-        "指标均基于保存的 8-bit PNG；饱和率为像素/通道比例。",
-        "R gradient 与 L TV 均为横、纵相邻像素绝对差均值之和。",
-        "",
-    ]
-    if warnings:
-        lines.append("Warnings:")
-        lines.extend(f"- {warning}" for warning in warnings)
-        lines.append("")
-
-    columns = [
-        ("iter", "iteration", ".0f"),
-        ("n", "n_low", ".0f"),
-        ("paired", "n_paired", ".0f"),
-        ("Rlow_mean", "r_low_mean_mean", ".5f"),
-        ("Rlow_std", "r_low_std_mean", ".5f"),
-        ("Rlow_>0.95", "r_low_bright_095_mean", ".5f"),
-        ("Rlow_grad", "r_low_gradient_mean", ".5f"),
-        ("Llow_TV", "l_low_tv_mean", ".5f"),
-        ("R_LH_L1", "r_consistency_l1_mean", ".5f"),
-        ("R_LH_PSNR", "r_consistency_psnr_mean", ".2f"),
-    ]
-    header = "  ".join(f"{label:>12}" for label, _, _ in columns)
-    lines.extend([header, "  ".join("-" * 12 for _ in columns)])
+def _format_table(columns: list[tuple[str, str, str]], summaries: list[dict]) -> list[str]:
+    header = "  ".join(f"{label:>13}" for label, _, _ in columns)
+    lines = [header, "  ".join("-" * 13 for _ in columns)]
     for summary in summaries:
         values = []
         for _, key, spec in columns:
             value = summary.get(key)
-            values.append(f"{value:12{spec}}" if value is not None else f"{'-':>12}")
+            values.append(f"{value:13{spec}}" if value is not None else f"{'-':>13}")
         lines.append("  ".join(values))
+    return lines
+
+
+def write_report(
+    path: Path, experiment_dir: Path, mode: str,
+    summaries: list[dict], warnings: list[str], source_signature: str | None = None,
+) -> None:
+    lines = [
+        f"# Retinex decomposition analysis v{ANALYSIS_VERSION}: {experiment_dir.name}",
+        f"mode: {mode}", "",
+        "All metrics use saved 8-bit PNG components and the validation order from config.yaml.",
+        "Self reconstruction measures R*L vs input; it does not prove decomposition semantics.",
+    ]
+    if source_signature is not None:
+        lines.insert(2, f"source_signature: {source_signature}")
+    if mode == "paired":
+        lines.append(
+            "R consistency measures R_low vs R_high; two jointly wrong R images can still score well."
+        )
+    if any("r_low_highref_psnr_mean" in summary for summary in summaries):
+        lines.extend([
+            "High-reference metrics use a matched normal-light photograph as a diagnostic reference,",
+            "not as literal reflectance ground truth.",
+        ])
     lines.append("")
+    if warnings:
+        lines.extend(["Warnings:", *(f"- {warning}" for warning in warnings), ""])
+
+    common = [
+        ("iter", "iteration", ".0f"), ("n", "n_low", ".0f"),
+        ("Rlow_mean", "r_low_mean_mean", ".4f"),
+        ("Rmean/input", "r_low_mean_gain_vs_input_mean", ".3f"),
+        ("Rlow_std", "r_low_std_mean", ".4f"),
+        ("Rlow_>0.95", "r_low_bright_095_mean", ".4f"),
+        ("R_TV/input", "r_low_tv_to_input_mean", ".3f"),
+        ("corr(R,I)", "r_low_input_gray_corr_mean", ".3f"),
+        ("Llow_mean", "l_low_mean_mean", ".4f"),
+        ("L_TV/input", "l_low_tv_to_input_mean", ".3f"),
+        ("corr(L,I)", "l_low_input_gray_corr_mean", ".3f"),
+    ]
+    if mode == "pure_low_single":
+        common.append(("anchor_err", "anchor_abs_error_mean", ".4f"))
+    lines.extend(["Component and no-reference structure diagnostics:", *_format_table(common, summaries), ""])
+
+    reconstruction = [
+        ("iter", "iteration", ".0f"), ("n", "n_low", ".0f"),
+        ("selfL_L1", "self_low_l1_mean", ".5f"),
+        ("selfL_PSNR", "self_low_psnr_mean", ".2f"),
+    ]
+    if mode == "paired":
+        reconstruction.extend([
+            ("selfH_L1", "self_high_l1_mean", ".5f"),
+            ("selfH_PSNR", "self_high_psnr_mean", ".2f"),
+            ("crossL_PSNR", "cross_low_psnr_mean", ".2f"),
+            ("crossH_PSNR", "cross_high_psnr_mean", ".2f"),
+        ])
+    lines.extend([
+        "Reconstruction-integrity diagnostics (not decomposition quality):",
+        *_format_table(reconstruction, summaries), "",
+    ])
+
+    if any("r_low_highref_psnr_mean" in summary for summary in summaries):
+        reference = [
+            ("iter", "iteration", ".0f"), ("n_ref", "n_highref", ".0f"),
+            ("low-ref_PSNR", "input_low_highref_psnr_mean", ".2f"),
+            ("Rlow-ref_L1", "r_low_highref_l1_mean", ".4f"),
+            ("Rlow-ref_PSNR", "r_low_highref_psnr_mean", ".2f"),
+            ("Rlow-ref_SSIM", "r_low_highref_ssim_mean", ".3f"),
+            ("mean_ratio", "r_low_highref_mean_ratio_mean", ".3f"),
+            (">ref+0.1", "r_low_highref_overbright_010_mean", ".3f"),
+            ("chroma_L1", "r_low_highref_chroma_l1_mean", ".4f"),
+            ("gray_corr", "r_low_highref_gray_corr_mean", ".3f"),
+            ("PSNR_gain", "r_low_highref_psnr_gain_vs_input_mean", ".2f"),
+        ]
+        lines.extend(["Matched normal-light reference diagnostics:", *_format_table(reference, summaries), ""])
+
+    if mode == "paired":
+        paired_columns = [
+            ("iter", "iteration", ".0f"), ("n_pair", "n_paired", ".0f"),
+            ("R_LH_L1", "r_consistency_l1_mean", ".4f"),
+            ("R_LH_PSNR", "r_consistency_psnr_mean", ".2f"),
+            ("R_LH_SSIM", "r_consistency_ssim_mean", ".3f"),
+            ("Rhigh-ref", "r_high_highref_psnr_mean", ".2f"),
+            ("Lhigh_mean", "l_high_mean_mean", ".4f"),
+            ("Lhigh_>0.95", "l_high_bright_095_mean", ".3f"),
+            ("Lh_TV/input", "l_high_tv_to_input_mean", ".3f"),
+            ("corr(Lh,Ih)", "l_high_input_gray_corr_mean", ".3f"),
+        ]
+        lines.extend(["Paired-only consistency and high-domain diagnostics:", *_format_table(paired_columns, summaries), ""])
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def sources_signature(sources: list[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted({item.resolve() for item in sources}):
+        stat = path.stat()
+        digest.update(str(path).encode("utf-8"))
+        digest.update(f"\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode("ascii"))
+    return digest.hexdigest()
+
+
+def is_analysis_fresh(report: Path, sources: list[Path]) -> bool:
+    if not report.is_file():
+        return False
+    expected = f"source_signature: {sources_signature(sources)}"
+    return expected in report.read_text(encoding="utf-8").splitlines()[:5]
 
 
 def main() -> int:
     args = parse_args()
     try:
         experiment_dir = resolve_experiment(args.experiment, args.experiments_dir)
-        prefix = args.output_prefix
-        report_path = experiment_dir / f"{prefix}.txt"
-        img_dir = experiment_dir / "img"
-
-        # ── 跳过机制：报告已存在且比 img/ 下所有 PNG 更新 → 跳过 ──
-        if not args.force and is_analysis_fresh(report_path, img_dir):
-            summary = read_summary_from_report(report_path)
-            print(f"[SKIP] {experiment_dir}  — 报告已是最新  ({summary})")
-            return 0
-
         config = load_config(experiment_dir)
         mode = str(config.get("data", {}).get("mode", "unknown"))
-        paired = mode == "paired"
+        loss = config.get("loss", {})
+        anchor_version = str(loss.get("anchor_version", "v2"))
+        loss_mode = str(loss.get("mode", ""))
+        l_type = "point" if loss_mode.endswith("_point") else "pixel"
         iteration_dirs = find_iteration_dirs(experiment_dir, args.iteration)
+        full_records = resolve_validation_records(experiment_dir, config)
+        report_path = experiment_dir / f"{args.output_prefix}.txt"
 
-        detail_rows = []
-        warnings = []
+        source_paths = [Path(__file__), experiment_dir / "config.yaml"]
+        source_paths.extend(
+            path for path in (
+                experiment_dir / "quick_val_manifest.txt",
+                experiment_dir / "final_full_validation.yaml",
+            ) if path.is_file()
+        )
+        for directory in iteration_dirs:
+            source_paths.extend(directory.glob("*.png"))
+        source_paths.extend(record.low for record in full_records)
+        source_paths.extend(record.high for record in full_records if record.high is not None)
+        details_path = experiment_dir / f"{args.output_prefix}_details.csv"
+        details_ready = not args.details or details_path.is_file()
+        if not args.force and details_ready and is_analysis_fresh(report_path, source_paths):
+            print(f"[SKIP] {experiment_dir} — analysis is fresh")
+            return 0
+
+        detail_rows: list[dict] = []
+        warnings: list[str] = []
         for iteration_dir in iteration_dirs:
-            rows, iteration_warnings = analyze_iteration(iteration_dir, paired)
+            records = records_for_iteration(experiment_dir, iteration_dir, full_records)
+            rows, iteration_warnings = analyze_iteration(
+                iteration_dir, paired=mode == "paired", input_records=records,
+                mode=mode, anchor_version=anchor_version, l_type=l_type,
+            )
             detail_rows.extend(rows)
             warnings.extend(iteration_warnings)
         summaries = summarize(detail_rows)
-
-        write_report(report_path, experiment_dir, mode, summaries, warnings)
+        write_report(
+            report_path, experiment_dir, mode, summaries, warnings,
+            source_signature=sources_signature(source_paths),
+        )
         output_paths = [report_path]
         if args.details:
-            details_path = experiment_dir / f"{prefix}_details.csv"
             write_csv(details_path, detail_rows)
             output_paths.append(details_path)
-
-        print(f"实验：{experiment_dir}")
-        print(f"模式：{mode}；迭代：{[row['iteration'] for row in summaries]}")
-        for path in output_paths:
-            print(f"已保存：{path}")
+        print(f"experiment: {experiment_dir}")
+        print(f"mode: {mode}; iterations: {[row['iteration'] for row in summaries]}")
+        for output in output_paths:
+            print(f"saved: {output}")
         for warning in warnings:
             print(f"[WARN] {warning}", file=sys.stderr)
         return 0

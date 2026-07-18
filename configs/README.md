@@ -92,8 +92,9 @@ loss:
 | `v2` | 真实相邻差分 | 无 | 是 |
 | `v3` | 真实相邻差分 | 3×3 replicate 平均 | 是 |
 
-版本号紧跟 smooth 权重写入配置文件名和自动实验名，例如 `0.1smv1`。当前所有
-Pixel 配置默认使用 `v1`；Point loss 不接受 `smooth_version`。
+版本号紧跟 smooth 权重写入配置文件名和自动实验名，例如 `0.1smv1`。复现基线
+使用 `v1`，后续机制消融可使用 `v2`/`v3`；Point loss 不接受
+`smooth_version`。
 
 ### Anchor 版本
 

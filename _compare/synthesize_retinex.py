@@ -6,14 +6,15 @@ R: 3 通道彩色反射图 [0,1]。L: 单通道光照图 [0,1]（保存时复制
     RetinexPixel*   → L 是逐像素光照图，暗处小值压暗、亮处大值提亮。
 
 用法:
-    .venv/bin/python3 scripts/synthesize_retinex.py                         # 全量
-    RETINEX_SYNTH_MAX_ITER=10000 .venv/bin/python3 scripts/synthesize_retinex.py  # 仅 iter 10000
+    .venv/bin/python _compare/synthesize_retinex.py                         # 全量
+    RETINEX_SYNTH_MAX_ITER=10000 .venv/bin/python _compare/synthesize_retinex.py
 
 环境变量:
     RETINEX_SYNTH_MAX_ITER  最大迭代轮次 (默认 100000)
     RETINEX_SYNTH_EXP_DIR   实验根目录 (默认 ../experiments)
+    RETINEX_SYNTH_FORCE     设为 1 时强制重建
 
-输出: img/ 同级 → synthesis/{iter}/，已存在跳过。
+输出: img/ 同级 → synthesis/{iter}/；仅跳过比对应 R/L 更新的有效文件。
 """
 
 import os
@@ -27,6 +28,9 @@ from pathlib import Path
 # ============================================================
 MAX_ITER: int = int(os.environ.get("RETINEX_SYNTH_MAX_ITER", "100000"))
 """最大处理的训练轮次。只处理目录名 ≤ 此值的迭代。"""
+
+FORCE: bool = os.environ.get("RETINEX_SYNTH_FORCE", "0") == "1"
+"""为 true 时无条件重建已有 synthesis 文件。"""
 
 EXPERIMENTS_DIR: str = os.environ.get(
     "RETINEX_SYNTH_EXP_DIR",
@@ -42,23 +46,39 @@ def synthesize_and_save(r_path: Path, l_path: Path, out_path: Path) -> bool:
 
     Args:
         r_path: R 分量 (3-ch BGR, uint8, [0,255])
-        l_path: L 分量 (3-ch BGR, uint8, [0,255]，三通道值相同)
+        l_path: L 分量（按单通道读取，uint8, [0,255]）
         out_path: 输出路径
 
     Returns:
-        True 如果实际合成了新文件，False 如果文件已存在被跳过
+        True 如果实际合成了文件，False 如果已有文件仍然有效
     """
-    if out_path.exists():
+    # Existing output is valid only while it is at least as new as both inputs.
+    # Revalidation may replace R/L in-place; a mere existence/count check would
+    # then silently mix a new decomposition with an old synthesis.
+    if (
+        not FORCE
+        and out_path.exists()
+        and out_path.stat().st_mtime >= max(r_path.stat().st_mtime, l_path.stat().st_mtime)
+    ):
         return False
 
-    R = cv2.imread(str(r_path), cv2.IMREAD_COLOR).astype(np.float32) / 255.0
-    L = cv2.imread(str(l_path), cv2.IMREAD_COLOR).astype(np.float32) / 255.0
+    r_raw = cv2.imread(str(r_path), cv2.IMREAD_COLOR)
+    l_raw = cv2.imread(str(l_path), cv2.IMREAD_GRAYSCALE)
+    if r_raw is None or l_raw is None:
+        raise OSError(f"无法读取 R/L: {r_path}, {l_path}")
+    if r_raw.shape[:2] != l_raw.shape:
+        raise ValueError(f"R/L 尺寸不一致: {r_path.name}, {l_path.name}")
+    R = r_raw.astype(np.float32) / 255.0
+    L = l_raw.astype(np.float32) / 255.0
 
-    S = np.clip(R * L, 0.0, 1.0)
-    S_uint8 = (S * 255.0).astype(np.uint8)
+    S = np.clip(R * L[..., None], 0.0, 1.0)
+    S_uint8 = np.rint(S * 255.0).astype(np.uint8)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out_path), S_uint8)
+    temp_path = out_path.with_name(f"{out_path.stem}.tmp{out_path.suffix}")
+    if not cv2.imwrite(str(temp_path), S_uint8):
+        raise OSError(f"无法保存合成图: {temp_path}")
+    os.replace(temp_path, out_path)
     return True
 
 
@@ -70,6 +90,7 @@ def process_iteration(iter_dir: Path, out_iter_dir: Path) -> dict:
         {"low": int, "high": int}  — 本次新合成的文件数（不含已存在的）
     """
     stats = {"low": 0, "high": 0}
+    expected_outputs: set[Path] = set()
 
     # ---- _low 分量 ----
     r_files_low = sorted(iter_dir.glob("*_R_low.png"))
@@ -82,6 +103,7 @@ def process_iteration(iter_dir: Path, out_iter_dir: Path) -> dict:
             print(f"    [WARN] 缺少 L 文件: {l_file.name}")
             continue
 
+        expected_outputs.add(s_file)
         if synthesize_and_save(r_file, l_file, s_file):
             stats["low"] += 1
 
@@ -96,8 +118,17 @@ def process_iteration(iter_dir: Path, out_iter_dir: Path) -> dict:
             print(f"    [WARN] 缺少 L 文件: {l_file.name}")
             continue
 
+        expected_outputs.add(s_file)
         if synthesize_and_save(r_file, l_file, s_file):
             stats["high"] += 1
+
+    # Derived files whose source components no longer exist must not leak into
+    # PSNR reports after a revalidation or partial rerender.
+    if out_iter_dir.is_dir():
+        for stale in out_iter_dir.glob("*_S_*.png"):
+            if stale not in expected_outputs:
+                stale.unlink()
+                print(f"    [REMOVE] 孤立合成文件: {stale.name}")
 
     return stats
 
@@ -126,30 +157,18 @@ def process_experiment_run(run_dir: Path) -> None:
     for iter_dir in iter_dirs:
         out_iter_dir = synthesis_dir / iter_dir.name
 
-        # 快速检查：是否已全部完成
-        expected_low = len(list(iter_dir.glob("*_R_low.png")))
-        expected_high = len(list(iter_dir.glob("*_R_high.png")))
-        existing_low = len(list(out_iter_dir.glob("*_S_low.png"))) if out_iter_dir.exists() else 0
-        existing_high = len(list(out_iter_dir.glob("*_S_high.png"))) if out_iter_dir.exists() else 0
-
-        if existing_low >= expected_low and existing_high >= expected_high:
-            print(f"  [iter {iter_dir.name}] 已完成，跳过 ({existing_low} low + {existing_high} high)")
-            total_low += existing_low
-            total_high += existing_high
-            continue
-
         stats = process_iteration(iter_dir, out_iter_dir)
         n_low, n_high = stats["low"], stats["high"]
-        new_low = n_low if n_low > 0 else existing_low
-        new_high = n_high if n_high > 0 else existing_high
+        complete_low = len(list(out_iter_dir.glob("*_S_low.png")))
+        complete_high = len(list(out_iter_dir.glob("*_S_high.png")))
 
-        parts = [f"low={new_low}"]
-        if expected_high > 0:
-            parts.append(f"high={new_high}")
+        parts = [f"low={complete_low} (更新 {n_low})"]
+        if list(iter_dir.glob("*_R_high.png")):
+            parts.append(f"high={complete_high} (更新 {n_high})")
         print(f"  [iter {iter_dir.name}] " + ", ".join(parts))
 
-        total_low += new_low
-        total_high += new_high
+        total_low += complete_low
+        total_high += complete_high
 
     print(f"  => 合计: {total_low} low + {total_high} high")
 
@@ -174,6 +193,7 @@ def main() -> None:
 
     print(f"实验根目录 : {exp_dir}")
     print(f"最大迭代   : {MAX_ITER}")
+    print(f"强制重建   : {FORCE}")
     print(f"实验 run 数: {len(run_dirs)}")
     print("=" * 60)
 
