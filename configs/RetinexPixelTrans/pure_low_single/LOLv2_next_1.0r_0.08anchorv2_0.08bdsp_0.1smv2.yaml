@@ -1,0 +1,52 @@
+experiment:
+  name: "LOLv2_next_1.0r_0.08anchorv2_0.08bdsp_0.1smv2"
+  auto_name: true
+
+data:
+  path: "datasets/LOLv2"
+  mode: "pure_low_single"
+  crop_size: 384
+  batch_size: 8
+  val_batch_size: 4
+  num_workers: 4
+
+model:
+  name: "RetinexPixelTrans"
+  dim: 24
+  l_heads: 1
+  l_ffn_expansion: 2.66
+  use_dp: false
+  gpu_id: "0"
+
+training:
+  seed: 42
+  max_iterations: 10000
+  lr: 0.0001
+  warmup_iterations: 1000
+  log_interval: 200
+  save_ckpt_interval: 500
+  eval:
+    eval_interval: 500
+    save_img_interval: 0
+    save_best_ckpt: true
+    save_best_images: true
+    selection_metric: "r_low_highref_psnr"
+    selection_mode: "max"
+    keep_top_ckpt: 3
+    max_save_images: 100
+    final_full_validation: false
+
+loss:
+  mode: "pure_low_single_pixel"
+  recon_weight: 1.0
+  anchor_weight: 0.08
+  anchor_version: "v2"
+  bdsp_weight: 0.08
+  smooth_weight: 0.1
+  smooth_version: "v2"
+
+resume:
+  checkpoint: ""
+  weights: ""
+
+device: "cuda"

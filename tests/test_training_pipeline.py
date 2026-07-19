@@ -494,16 +494,49 @@ def test_paired_evaluate_saves_low_and_high_for_every_image(tmp_path):
         cross_recon_weight_low=0, cross_recon_weight_high=0,
         equal_r_weight=0,
     )
-    metrics, _ = evaluate(
+    metrics, psnr_proxy = evaluate(
         IdentityRetinex(), loader, torch.device('cpu'), 0.0, str(tmp_path),
         loss_function=loss, save_images=True, global_iter=1,
     )
     assert math.isfinite(metrics['total_loss'])
+    assert metrics['r_consistency_psnr'] == pytest.approx(psnr_proxy)
+    assert math.isfinite(metrics['r_low_highref_psnr'])
+    assert math.isfinite(metrics['r_low_highref_l1'])
+    assert math.isfinite(metrics['r_low_highref_mean_ratio'])
+    assert math.isfinite(metrics['r_low_highref_overbright_010'])
     output_dir = tmp_path / '1'
     assert len(list(output_dir.glob('*_R_low.png'))) == 4
     assert len(list(output_dir.glob('*_L_low.png'))) == 4
     assert len(list(output_dir.glob('*_R_high.png'))) == 4
     assert len(list(output_dir.glob('*_L_high.png'))) == 4
+
+
+def test_pure_low_single_evaluate_can_use_optional_high_reference(tmp_path):
+    class IdentityRetinex(torch.nn.Module):
+        def forward(self, image):
+            return image, torch.ones_like(image[:, :1])
+
+    low = torch.full((2, 3, 4, 4), 0.5)
+    high = torch.ones_like(low)
+    loader = DataLoader(TensorDataset(low, high), batch_size=2)
+    loss = PureLowSingleLoss(
+        l_type='pixel', recon_weight=1, anchor_weight=0,
+        anchor_version='v2', bdsp_weight=0, smooth_weight=0,
+        smooth_version='v1',
+    )
+    metrics, psnr_proxy = evaluate(
+        IdentityRetinex(), loader, torch.device('cpu'), 0.0, str(tmp_path),
+        loss_function=loss, save_images=True, global_iter=1,
+    )
+    assert psnr_proxy is None
+    assert 'r_consistency_psnr' not in metrics
+    assert metrics['r_low_highref_psnr'] == pytest.approx(6.0206003, abs=1e-5)
+    assert metrics['r_low_highref_l1'] == pytest.approx(0.5)
+    assert metrics['r_low_highref_mean_ratio'] == pytest.approx(0.5)
+    assert metrics['r_low_highref_overbright_010'] == pytest.approx(0.0)
+    output_dir = tmp_path / '1'
+    assert len(list(output_dir.glob('*_R_low.png'))) == 2
+    assert len(list(output_dir.glob('*_R_high.png'))) == 0
 
 
 def test_nonfinite_loss_never_updates_parameters():

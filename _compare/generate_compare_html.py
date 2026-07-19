@@ -21,6 +21,59 @@ DATASET_ALIASES = {
 # 数据集在 HTML 中的显示顺序（未列出的数据集按名称排序追加到末尾）
 DATASET_ORDER = ["LOLv2", "BDDnight"]
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+PREFERRED_IMAGE_SETS = ("final_best", "best")
+
+
+def image_set_sort_key(name: str):
+    """Sort named best sets first, then numeric iterations, then other labels."""
+    if name in PREFERRED_IMAGE_SETS:
+        return (0, PREFERRED_IMAGE_SETS.index(name), 0, "")
+    if name.isdigit():
+        return (1, 0, int(name), "")
+    return (2, 0, 0, name)
+
+
+def is_selectable_image_set(name: str) -> bool:
+    return name in PREFERRED_IMAGE_SETS or name.isdigit()
+
+
+def read_image_set_metadata(image_set_dir: Path) -> dict:
+    metadata_path = image_set_dir / "_image_set.yaml"
+    if not metadata_path.is_file():
+        return {}
+    return yaml.safe_load(metadata_path.read_text(encoding="utf-8")) or {}
+
+
+def collect_image_sets(run_dir: Path) -> tuple[list[str], dict[str, int], dict[str, str | None]]:
+    """Collect selectable img sets and matching synthesis directories if available."""
+    img_dir = run_dir / "img"
+    syn_dir = run_dir / "synthesis"
+    image_sets: list[str] = []
+    img_indices: dict[str, int] = {}
+    synthesis_sets: dict[str, str | None] = {}
+    if not img_dir.is_dir():
+        return image_sets, img_indices, synthesis_sets
+
+    for image_set_dir in sorted(img_dir.iterdir(), key=lambda path: image_set_sort_key(path.name)):
+        if not image_set_dir.is_dir() or not is_selectable_image_set(image_set_dir.name):
+            continue
+        r_files = list(image_set_dir.glob("*_R_low.png"))
+        if not r_files:
+            continue
+        image_set = image_set_dir.name
+        image_sets.append(image_set)
+        img_indices[image_set] = max(int(f.stem.split("_")[0]) for f in r_files)
+
+        synthesis_set: str | None = None
+        if (syn_dir / image_set).is_dir():
+            synthesis_set = image_set
+        else:
+            metadata = read_image_set_metadata(image_set_dir)
+            checkpoint_step = metadata.get("checkpoint_step")
+            if checkpoint_step is not None and (syn_dir / str(checkpoint_step)).is_dir():
+                synthesis_set = str(checkpoint_step)
+        synthesis_sets[image_set] = synthesis_set
+    return image_sets, img_indices, synthesis_sets
 
 
 def _dataset_sort_key(ds_name: str):
@@ -213,10 +266,7 @@ for model_dir in sorted(EXP_DIR.iterdir()):
             run_name = run_dir.name
             loss_cfg = extract_loss_config(run_name)
 
-            iters = sorted(
-                [d.name for d in syn.iterdir() if d.is_dir() and d.name.isdigit()],
-                key=lambda x: int(x),
-            )
+            iters, img_indices, synthesis_sets = collect_image_sets(run_dir)
 
             # PSNR
             psnr = "-"
@@ -230,18 +280,6 @@ for model_dir in sorted(EXP_DIR.iterdir()):
                                 psnr = f"{float(parts[2]):.1f}"
                             except ValueError:
                                 pass
-
-            # img 目录 → iter → max_index
-            img_indices = {}
-            img_dir = run_dir / "img"
-            if img_dir.exists():
-                for iter_d in img_dir.iterdir():
-                    if iter_d.is_dir() and iter_d.name.isdigit():
-                        r_files = list(iter_d.glob("*_R_low.png"))
-                        if r_files:
-                            img_indices[iter_d.name] = max(
-                                int(f.stem.split("_")[0]) for f in r_files
-                            )
 
             experiments.append({
                 "dataset_id":   dataset_id,
@@ -261,6 +299,7 @@ for model_dir in sorted(EXP_DIR.iterdir()):
                 "psnr":         psnr,
                 "rel_path":     str(run_dir.relative_to(ROOT)),
                 "img_indices": img_indices,
+                "synthesis_sets": synthesis_sets,
             })
 
 # ── 按 dataset_id → model → mode → loss 分组 ────────────────
@@ -347,7 +386,7 @@ for ds_key, info in sorted(datasets.items(), key=lambda x: _dataset_sort_key(x[0
                     for v in r["img_indices"].values():
                         if v > max_img_idx:
                             max_img_idx = v
-    info["all_iters"] = sorted(all_iters, key=lambda x: int(x))
+    info["all_iters"] = sorted(all_iters, key=image_set_sort_key)
     info["max_img_idx"] = max_img_idx
 
 # ── 构建 JS 数据 ──────────────────────────────────────────
@@ -372,6 +411,7 @@ for ds_key in _ordered_ds_keys:
                         "psnr":        r["psnr"],
                         "rel_path":    r["rel_path"],
                         "img_indices": r["img_indices"],
+                        "synthesis_sets": r["synthesis_sets"],
                     })
                 js_losses.append({
                     "loss":       loss_slot["loss"],
@@ -526,7 +566,7 @@ const IMG_PREFIX = "{IMG_PREFIX}";
 const DATA = {json.dumps(js_data, ensure_ascii=False)};
 
 let currentDS = '';
-let currentIter = '10000';
+let currentIter = 'best';
 let currentIdx = 0;
 
 function init() {{
@@ -542,17 +582,11 @@ function init() {{
     selectDS(dsOrder[0]);
 }}
 
-function selectDS(ds) {{
-    currentDS = ds;
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    for (const t of document.querySelectorAll('.tab')) {{
-        if (t.textContent === ds.replace('datasets/','')) t.classList.add('active');
+function chooseDefaultImageSet(info) {{
+    for (const preferred of ['final_best', 'best']) {{
+        if (info.all_iters.includes(preferred)) return preferred;
     }}
-    const info = DATA[ds];
-
-    const iterSel = document.getElementById('iterSelect');
-    iterSel.innerHTML = info.all_iters.map(i => `<option>${{i}}</option>`).join('');
-    let bestIter = info.all_iters[0] || '10000';
+    let bestIter = info.all_iters[0] || 'best';
     let maxCount = 0;
     for (const it of info.all_iters) {{
         let cnt = 0;
@@ -565,10 +599,29 @@ function selectDS(ds) {{
                 }}
             }}
         }}
-        if (cnt > maxCount || (cnt === maxCount && parseInt(it) > parseInt(bestIter))) {{
+        const numeric = Number.parseInt(it, 10);
+        const bestNumeric = Number.parseInt(bestIter, 10);
+        if (
+            cnt > maxCount ||
+            (cnt === maxCount && Number.isFinite(numeric) && (!Number.isFinite(bestNumeric) || numeric > bestNumeric))
+        ) {{
             maxCount = cnt; bestIter = it;
         }}
     }}
+    return bestIter;
+}}
+
+function selectDS(ds) {{
+    currentDS = ds;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    for (const t of document.querySelectorAll('.tab')) {{
+        if (t.textContent === ds.replace('datasets/','')) t.classList.add('active');
+    }}
+    const info = DATA[ds];
+
+    const iterSel = document.getElementById('iterSelect');
+    iterSel.innerHTML = info.all_iters.map(i => `<option>${{i}}</option>`).join('');
+    let bestIter = chooseDefaultImageSet(info);
     iterSel.value = bestIter;
     currentIter = bestIter;
     iterSel.onchange = () => {{ currentIter = iterSel.value; updateSlider(); render(); }};
@@ -652,6 +705,15 @@ function collectColumns(info) {{
 
 function runWidth(col) {{ return col.mode.mode === 'paired' ? 6 : 3; }}
 
+function componentPath(base, group, imageSet, index, suffix) {{
+    if (!imageSet) return '';
+    return `${{IMG_PREFIX}}${{base}}/${{group}}/${{imageSet}}/${{index}}_${{suffix}}.png`;
+}}
+
+function imageHtml(src) {{
+    return src ? `<img src="${{src}}" loading="lazy" onerror="this.style.display='none'">` : '';
+}}
+
 function render() {{
     const info = DATA[currentDS];
     const idx = currentIdx;
@@ -718,29 +780,30 @@ function render() {{
     for (let i = start; i <= end; i++) {{
         html += `<tr><td class="idx" style="font-size:11px;color:#888">${{i}}</td>`;
         const origFile = info.validation_files[i] || '';
-        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/${{info.validation_split}}/${{info.validation_subdir}}/${{encodeURI(origFile)}}" onerror="this.style.display='none'"></td>`;
+        html += `<td class="original"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/${{info.validation_split}}/${{info.validation_subdir}}/${{encodeURI(origFile)}}" loading="lazy" onerror="this.style.display='none'"></td>`;
         if (hasHighRef) {{
             const highFile = info.validation_high_files[i] || '';
-            html += `<td class="reference"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/${{info.validation_split}}/${{info.validation_high_subdir}}/${{encodeURI(highFile)}}" onerror="this.style.display='none'"></td>`;
+            html += `<td class="reference"><img src="${{IMG_PREFIX}}${{info.img_prefix}}/${{info.validation_split}}/${{info.validation_high_subdir}}/${{encodeURI(highFile)}}" loading="lazy" onerror="this.style.display='none'"></td>`;
         }}
         for (let ci = 0; ci < cols.length; ci++) {{
             const col = cols[ci];
             const r = col.run;
             const base = r.rel_path;
+            const synthesisSet = r.synthesis_sets[currentIter];
             let sepCls = '';
             if (col.isFirstInModel && ci > 0) sepCls = ' sep-model';
             else if (col.isFirstInMode && ci > 0 && !col.isFirstInModel) sepCls = ' sep-mode';
             if (col.mode.mode === 'paired') {{
-                html += `<td class="${{sepCls}}"><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_low.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_high.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_low.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_high.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_low.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_high.png" onerror="this.style.display='none'"></td>`;
+                html += `<td class="${{sepCls}}">${{imageHtml(componentPath(base, 'img', currentIter, i, 'R_low'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'img', currentIter, i, 'R_high'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'img', currentIter, i, 'L_low'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'img', currentIter, i, 'L_high'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'synthesis', synthesisSet, i, 'S_low'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'synthesis', synthesisSet, i, 'S_high'))}}</td>`;
             }} else {{
-                html += `<td class="${{sepCls}}"><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_R_low.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/img/${{currentIter}}/${{i}}_L_low.png" onerror="this.style.display='none'"></td>`;
-                html += `<td><img src="${{IMG_PREFIX}}${{base}}/synthesis/${{currentIter}}/${{i}}_S_low.png" onerror="this.style.display='none'"></td>`;
+                html += `<td class="${{sepCls}}">${{imageHtml(componentPath(base, 'img', currentIter, i, 'R_low'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'img', currentIter, i, 'L_low'))}}</td>`;
+                html += `<td>${{imageHtml(componentPath(base, 'synthesis', synthesisSet, i, 'S_low'))}}</td>`;
             }}
         }}
         html += '</tr>';

@@ -11,11 +11,15 @@ from paired_steps_common import (
     COMPARE_ANALYZER,
     ROOT,
     RESULT_ROOT,
+    add_image_set_args,
+    analyzer_args_for_image_set,
+    component_counts,
     details_path,
     discover_runs,
     ensure_output_dirs,
     relative,
     report_path,
+    selected_image_set,
     write_csv,
 )
 
@@ -31,7 +35,7 @@ REQUIRED_DETAIL_COLUMNS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     parser.add_argument("--force", action="store_true")
     default_python = ROOT / ".venv" / "bin" / "python3"
     parser.add_argument(
@@ -52,15 +56,37 @@ def details_have_required_columns(path) -> bool:
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     rows = []
     failures = 0
     for run_dir in discover_runs():
+        counts = component_counts(run_dir, image_set)
+        if (
+            counts["R_low"] == 0
+            or counts["L_low"] != counts["R_low"]
+            or counts["R_high"] != counts["R_low"]
+            or counts["L_high"] != counts["R_low"]
+        ):
+            rows.append(
+                {
+                    "run": run_dir.name,
+                    "status": "skip_incomplete",
+                    "returncode": "",
+                    "R_low_count": counts["R_low"],
+                    "L_low_count": counts["L_low"],
+                    "R_high_count": counts["R_high"],
+                    "L_high_count": counts["L_high"],
+                    "stdout": "",
+                    "stderr": "",
+                }
+            )
+            print(f"[skip incomplete] {relative(run_dir)}")
+            continue
         force_this_run = args.force or not details_have_required_columns(details_path(run_dir))
         command = [
             args.python,
             str(COMPARE_ANALYZER),
-            "--iteration",
-            str(args.iteration),
+            *analyzer_args_for_image_set(args),
             "--details",
             str(run_dir),
         ]
@@ -75,6 +101,7 @@ def main() -> int:
         rows.append(
             {
                 "run": run_dir.name,
+                "status": "ok" if proc.returncode == 0 else "failed",
                 "returncode": proc.returncode,
                 "report": relative(report_path(run_dir)),
                 "details": relative(details_path(run_dir)),

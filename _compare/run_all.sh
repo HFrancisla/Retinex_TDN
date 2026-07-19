@@ -9,7 +9,7 @@
 # 环境变量（可选）:
 #   RETINEX_SYNTH_MAX_ITER    最大迭代轮次 (默认 100000)
 #   RETINEX_SYNTH_EXP_DIR     实验根目录 (默认 ./experiments)
-#   RETINEX_ANALYZE_ITER      分解分析迭代 (默认 10000；设为 all 分析全部)
+#   RETINEX_ANALYZE_ITER      分解分析迭代 (默认 best；设为 all 分析全部可用 img)
 #   PYTHON_BIN                Python 解释器 (默认 .venv/bin/python3，回退 python3)
 # ============================================================
 
@@ -74,10 +74,15 @@ if [ "${RETINEX_FORCE_ANALYZE:-0}" = "1" ]; then
     ANALYZE_ARGS+=(--force)
     echo "  (强制模式：忽略已有报告)"
 fi
-ANALYZE_ITER="${RETINEX_ANALYZE_ITER:-10000}"
-if [ "$ANALYZE_ITER" != "all" ]; then
+ANALYZE_ITER="${RETINEX_ANALYZE_ITER:-best}"
+if [ "$ANALYZE_ITER" = "best" ]; then
+    echo "  (默认分析 published image set: final_best 优先，否则 best)"
+elif [ "$ANALYZE_ITER" != "all" ]; then
     ANALYZE_ARGS+=(--iteration "$ANALYZE_ITER")
     echo "  (统一分析 iteration=$ANALYZE_ITER)"
+else
+    ANALYZE_ARGS+=(--all-image-sets)
+    echo "  (分析全部可用 img image sets)"
 fi
 
 ANALYZE_COUNT=0

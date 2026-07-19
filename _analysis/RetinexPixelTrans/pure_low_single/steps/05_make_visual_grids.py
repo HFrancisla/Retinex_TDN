@@ -16,11 +16,14 @@ from pure_single_steps_common import (
     EXP_ROOT,
     FIG_ROOT,
     RESULT_ROOT,
+    add_image_set_args,
     as_float,
     dataset_input_roots,
+    detail_rows_for_image_set,
     details_path,
     ensure_output_dirs,
     read_csv,
+    resolve_image_set,
     run_config,
     write_csv,
 )
@@ -28,7 +31,7 @@ from pure_single_steps_common import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     parser.add_argument("--top-runs", type=int, default=5)
     return parser.parse_args()
 
@@ -88,9 +91,11 @@ def make_grid(title: str, row_labels: list[str], col_labels: list[str], images: 
     canvas.save(output)
 
 
-def run_rows(run_name: str, iteration: int) -> list[dict[str, str]]:
-    rows = read_csv(details_path(EXP_ROOT / run_name))
-    return [row for row in rows if int(float(row.get("iteration", -1))) == iteration]
+def run_rows(run_name: str, args: argparse.Namespace) -> list[dict[str, str]]:
+    run_dir = EXP_ROOT / run_name
+    rows = read_csv(details_path(run_dir))
+    image_set = resolve_image_set(run_dir, str(args.iteration) if args.iteration is not None else str(args.image_set))
+    return detail_rows_for_image_set(rows, args, image_set)
 
 
 def choose_cases(rows: list[dict[str, str]], has_high: bool) -> list[tuple[str, dict[str, str]]]:
@@ -107,8 +112,8 @@ def choose_cases(rows: list[dict[str, str]], has_high: bool) -> list[tuple[str, 
     return cases
 
 
-def components(run_name: str, iteration: int, index: int, low_path: Path, high_path: Path | None) -> list[np.ndarray]:
-    image_dir = EXP_ROOT / run_name / "img" / str(iteration)
+def components(run_name: str, image_set: str, index: int, low_path: Path, high_path: Path | None) -> list[np.ndarray]:
+    image_dir = EXP_ROOT / run_name / "img" / image_set
     i_low = read_rgb(low_path)
     r = read_rgb(image_dir / f"{index}_R_low.png")
     l = read_rgb(image_dir / f"{index}_L_low.png", gray=True)
@@ -135,7 +140,7 @@ def main() -> int:
     for dataset, ranked in sorted(by_dataset.items()):
         top = ranked[: args.top_runs]
         best = top[0]
-        best_rows = run_rows(best["run"], args.iteration)
+        best_rows = run_rows(best["run"], args)
         if not best_rows:
             continue
         config = run_config(EXP_ROOT / best["run"])
@@ -152,8 +157,12 @@ def main() -> int:
             images = []
             row_labels = []
             for run in top:
-                metrics = {int(float(row["image_index"])): row for row in run_rows(run["run"], args.iteration)}.get(index, {})
-                images.append(components(run["run"], args.iteration, index, low_path, high_path))
+                metrics = {int(float(row["image_index"])): row for row in run_rows(run["run"], args)}.get(index, {})
+                image_set = run.get("image_set") or resolve_image_set(
+                    EXP_ROOT / run["run"],
+                    str(args.iteration) if args.iteration is not None else str(args.image_set),
+                )
+                images.append(components(run["run"], image_set, index, low_path, high_path))
                 row_labels.append(
                     f"{run['label']}\n"
                     f"self {as_float(metrics, 'self_low_psnr'):.1f}dB; "

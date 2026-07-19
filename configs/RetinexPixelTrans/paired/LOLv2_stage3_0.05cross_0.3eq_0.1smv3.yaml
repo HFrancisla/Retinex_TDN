@@ -28,12 +28,14 @@ training:
   save_ckpt_interval: 500
   eval:
     eval_interval: 500
-    save_img_interval: 500
+    save_img_interval: 0
     save_best_ckpt: true
-    selection_metric: "psnr"
+    save_best_images: true
+    selection_metric: "r_low_highref_psnr"
     selection_mode: "max"
-    keep_top_ckpt: 0
+    keep_top_ckpt: 3
     max_save_images: 100
+    final_full_validation: false
 
 loss:
   mode: "paired_pixel"

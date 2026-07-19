@@ -9,16 +9,20 @@ from collections import defaultdict
 
 from pure_single_steps_common import (
     RESULT_ROOT,
+    add_image_set_args,
     as_float,
     config_fingerprint,
+    detail_rows_for_image_set,
     details_path,
     discover_runs,
     ensure_output_dirs,
     full_validation_metrics,
     markdown_table,
     read_csv,
+    resolve_image_set,
     run_config,
     run_label,
+    selected_image_set,
     summarize_metric,
     write_csv,
 )
@@ -68,7 +72,7 @@ REQUIRED_COLUMNS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     return parser.parse_args()
 
 
@@ -87,6 +91,7 @@ def add_rank(rows: list[dict], key: str, higher_is_better: bool, rank_key: str) 
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     summaries = []
     missing = []
     stale = []
@@ -104,13 +109,15 @@ def main() -> int:
         if not REQUIRED_COLUMNS.issubset(set(all_rows[0].keys())):
             stale.append(run_dir.name)
             continue
-        rows = [row for row in all_rows if int(float(row.get("iteration", -1))) == args.iteration]
+        resolved_image_set = resolve_image_set(run_dir, image_set)
+        rows = detail_rows_for_image_set(all_rows, args, resolved_image_set)
         if not rows:
             incomplete.append(run_dir.name)
             continue
         summary = {
             "run": run_dir.name,
             "label": run_label(run_dir, config),
+            "image_set": resolved_image_set,
             "n_images": len(rows),
             **config_fingerprint(config, run_dir.name),
             **full_validation_metrics(run_dir),
@@ -174,7 +181,7 @@ def main() -> int:
     md_lines = [
         "# Step 02 pure-low-single summary",
         "",
-        f"Iteration: `{args.iteration}`",
+        f"Image set: `{image_set}`",
         "",
         "Ranking is computed per dataset. LOLv2 high-reference metrics are diagnostic only; BDDnight is ranked without high-reference metrics.",
         "",
@@ -221,7 +228,7 @@ def main() -> int:
             "",
         ])
     if incomplete:
-        md_lines.extend(["## Missing target iteration rows", "", *[f"- `{item}`" for item in incomplete], ""])
+        md_lines.extend(["## Missing target image-set rows", "", *[f"- `{item}`" for item in incomplete], ""])
     (RESULT_ROOT / "pure_single_analysis.md").write_text("\n".join(md_lines), encoding="utf-8")
     print(f"saved: {RESULT_ROOT / 'pure_single_summary.csv'}")
     print(f"saved: {RESULT_ROOT / 'pure_single_ranking.csv'}")

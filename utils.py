@@ -40,6 +40,13 @@ def calculate_psnr(pred, target, max_val=1.0):
     return psnr.mean().item()
 
 
+def calculate_l1(pred, target):
+    """Return mean absolute error per image, averaged across the batch."""
+    if pred.shape != target.shape:
+        raise ValueError(f"L1 shape mismatch: pred={pred.shape}, target={target.shape}")
+    return (pred - target).abs().flatten(1).mean(dim=1).mean().item()
+
+
 
 
 def load_config(config_path: str) -> dict:
@@ -281,8 +288,12 @@ def read_data(root: str, mode: str):
 
 
 
-def read_pure_low_data(root: str):
-    """读取 pure_low 数据集，仅使用 low 文件夹。"""
+def read_pure_low_data(root: str, include_val_high_ref: bool = False):
+    """读取 pure_low 数据集。
+
+    训练始终只返回 low 图像；当 ``include_val_high_ref`` 为 true 且验证集存在
+    同名 high 图像时，额外返回验证用 high reference 路径。
+    """
     if not os.path.isdir(root):
         raise FileNotFoundError(f"dataset root does not exist: {root}")
 
@@ -335,22 +346,57 @@ def read_pure_low_data(root: str):
          if os.path.splitext(i)[-1].lower() in supported]
     )
 
+    val_high_ref_path = []
+    if include_val_high_ref:
+        val_high_root = os.path.join(val_root, "high")
+        if os.path.isdir(val_high_root):
+            high_paths = sorted(
+                os.path.join(val_high_root, i) for i in os.listdir(val_high_root)
+                if os.path.splitext(i)[-1].lower() in supported
+            )
+            low_by_stem = {
+                os.path.splitext(os.path.basename(path))[0]: path
+                for path in val_low_path
+            }
+            high_by_stem = {
+                os.path.splitext(os.path.basename(path))[0]: path
+                for path in high_paths
+            }
+            if low_by_stem.keys() == high_by_stem.keys():
+                val_low_path = [low_by_stem[stem] for stem in sorted(low_by_stem)]
+                val_high_ref_path = [high_by_stem[stem] for stem in sorted(low_by_stem)]
+            elif high_paths:
+                missing_high = sorted(low_by_stem.keys() - high_by_stem.keys())
+                missing_low = sorted(high_by_stem.keys() - low_by_stem.keys())
+                raise ValueError(
+                    "pure-low validation high reference filenames do not match low: "
+                    f"missing high={missing_high[:10]}, missing low={missing_low[:10]}"
+                )
+
     if not train_low_path or not val_low_path:
         raise ValueError(
             f"pure-low dataset must contain images in both train and validation: "
             f"train={len(train_low_path)}, val={len(val_low_path)}"
         )
     print("pure_low loader: train({}), val({})".format(len(train_low_path), len(val_low_path)))
+    if include_val_high_ref:
+        print("pure_low validation high refs: {}".format(len(val_high_ref_path)))
+        return list(train_low_path), list(val_low_path), list(val_high_ref_path)
     return list(train_low_path), list(val_low_path)
 def _forward_loss(model, loss_function, data, device):
     """统一四种数据模式的前向和损失调用。"""
     non_blocking = device.type == 'cuda'
     if isinstance(loss_function, PureLowSingleLoss):
-        I_low = data.to(device, non_blocking=non_blocking)
+        if isinstance(data, (tuple, list)):
+            I_low, I_high = data
+            I_high = I_high.to(device, non_blocking=non_blocking)
+        else:
+            I_low, I_high = data, None
+        I_low = I_low.to(device, non_blocking=non_blocking)
         R_low, L_low = model(I_low)
         return (
             loss_function(R_low, L_low, I_low),
-            I_low, None, R_low, L_low, None, None,
+            I_low, I_high, R_low, L_low, None, None,
         )
 
     I_low, I_high = data
@@ -485,15 +531,44 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                                  f"{image_index}_L_high")
                     save_count += 1
 
-            # PSNR 仅 paired 模式有意义：比较同一场景的 R_low vs R_high（反射分量应一致）
+            # paired loss 专用：比较同一场景的 R_low vs R_high（反射分量应一致）。
             if isinstance(loss_function, PairedLoss) and R_high is not None:
                 for batch_index in range(I_low.shape[0]):
+                    r_low = R_low[batch_index:batch_index + 1].clamp(0, 1)
+                    r_high = R_high[batch_index:batch_index + 1].clamp(0, 1)
+
                     psnr_val = calculate_psnr(
-                        R_low[batch_index:batch_index + 1].clamp(0, 1),
-                        R_high[batch_index:batch_index + 1].clamp(0, 1),
+                        r_low,
+                        r_high,
                     )
                     accu_psnr += psnr_val
                     psnr_count += 1
+                    metric_sums['r_consistency_psnr'] = (
+                        metric_sums.get('r_consistency_psnr', 0.0) + psnr_val
+                    )
+
+            # 配对数据集可用的实用参考指标。pure-low 训练也可以只在验证阶段携带
+            # I_high_ref，用于选择 checkpoint，但不进入训练 loss。
+            if I_high is not None:
+                for batch_index in range(I_low.shape[0]):
+                    r_low = R_low[batch_index:batch_index + 1].clamp(0, 1)
+                    high_ref = I_high[batch_index:batch_index + 1].clamp(0, 1)
+                    metric_sums['r_low_highref_psnr'] = (
+                        metric_sums.get('r_low_highref_psnr', 0.0)
+                        + calculate_psnr(r_low, high_ref)
+                    )
+                    metric_sums['r_low_highref_l1'] = (
+                        metric_sums.get('r_low_highref_l1', 0.0)
+                        + calculate_l1(r_low, high_ref)
+                    )
+                    metric_sums['r_low_highref_mean_ratio'] = (
+                        metric_sums.get('r_low_highref_mean_ratio', 0.0)
+                        + (r_low.mean() / high_ref.mean().clamp_min(1e-8)).item()
+                    )
+                    metric_sums['r_low_highref_overbright_010'] = (
+                        metric_sums.get('r_low_highref_overbright_010', 0.0)
+                        + (r_low > high_ref + 0.1).float().mean().item()
+                    )
 
             batch_size = I_low.shape[0]
 

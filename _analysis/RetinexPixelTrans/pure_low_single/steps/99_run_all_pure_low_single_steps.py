@@ -15,7 +15,12 @@ ROOT = STEP_ROOT.parents[3]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    parser.add_argument(
+        "--image-set",
+        default="auto",
+        help="image set to analyze; auto uses final_best when present, otherwise best",
+    )
+    parser.add_argument("--iteration", type=int, default=None)
     parser.add_argument("--force", action="store_true", help="force regeneration in step 01")
     parser.add_argument("--skip-details", action="store_true", help="skip step 01 if details are already prepared")
     default_python = ROOT / ".venv" / "bin" / "python3"
@@ -33,7 +38,10 @@ def run(python: str, script: str, args: list[str]) -> int:
 
 def main() -> int:
     args = parse_args()
-    common_args = ["--iteration", str(args.iteration)]
+    common_args = (
+        ["--iteration", str(args.iteration)]
+        if args.iteration is not None else ["--image-set", str(args.image_set)]
+    )
     steps = [("00_inventory.py", common_args)]
     if not args.skip_details:
         detail_args = [*common_args]

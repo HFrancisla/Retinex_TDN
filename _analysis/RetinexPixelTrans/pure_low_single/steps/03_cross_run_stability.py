@@ -13,21 +13,25 @@ import numpy as np
 from pure_single_steps_common import (
     EXP_ROOT,
     RESULT_ROOT,
+    add_image_set_args,
     as_float,
+    detail_rows_for_image_set,
     details_path,
     discover_runs,
     ensure_output_dirs,
     markdown_table,
     read_csv,
+    resolve_image_set,
     run_config,
     run_label,
+    selected_image_set,
     write_csv,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     return parser.parse_args()
 
 
@@ -61,13 +65,15 @@ def baseline_for(dataset: str, runs: list[dict]) -> dict | None:
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     run_rows = []
     for run_dir in discover_runs():
         details = details_path(run_dir)
         if not details.is_file():
             continue
         config = run_config(run_dir)
-        rows = [row for row in read_csv(details) if int(float(row.get("iteration", -1))) == args.iteration]
+        resolved_image_set = resolve_image_set(run_dir, image_set)
+        rows = detail_rows_for_image_set(read_csv(details), args, resolved_image_set)
         if not rows:
             continue
         run_rows.append(
@@ -75,6 +81,7 @@ def main() -> int:
                 "run": run_dir.name,
                 "label": run_label(run_dir, config),
                 "dataset": str((config.get("data", {}) or {}).get("path", "")),
+                "image_set": resolved_image_set,
                 "details_rows": rows,
             }
         )
@@ -96,10 +103,10 @@ def main() -> int:
         baseline = baseline_for(dataset, rows)
         if baseline is None:
             continue
-        baseline_dir = EXP_ROOT / baseline["run"] / "img" / str(args.iteration)
+        baseline_dir = EXP_ROOT / baseline["run"] / "img" / baseline["image_set"]
         baseline_details = {int(float(row["image_index"])): row for row in baseline["details_rows"]}
         for row in rows:
-            run_dir = EXP_ROOT / row["run"] / "img" / str(args.iteration)
+            run_dir = EXP_ROOT / row["run"] / "img" / row["image_set"]
             values: dict[str, list[float]] = defaultdict(list)
             for detail in row["details_rows"]:
                 index = int(float(detail["image_index"]))

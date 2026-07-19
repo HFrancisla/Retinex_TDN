@@ -11,6 +11,8 @@ from pure_single_steps_common import (
     COMPARE_ANALYZER,
     RESULT_ROOT,
     ROOT,
+    add_image_set_args,
+    analyzer_args_for_image_set,
     component_counts,
     details_path,
     discover_runs,
@@ -18,6 +20,8 @@ from pure_single_steps_common import (
     read_csv,
     relative,
     report_path,
+    resolve_image_set,
+    selected_image_set,
     write_csv,
 )
 
@@ -32,14 +36,14 @@ REQUIRED_COLUMNS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     parser.add_argument("--force", action="store_true")
     default_python = ROOT / ".venv" / "bin" / "python3"
     parser.add_argument("--python", default=str(default_python) if default_python.is_file() else sys.executable)
     return parser.parse_args()
 
 
-def has_required_schema(path) -> bool:
+def has_required_schema(path, image_set: str) -> bool:
     if not path.is_file():
         return False
     try:
@@ -48,21 +52,29 @@ def has_required_schema(path) -> bool:
         return False
     if not rows:
         return False
-    return REQUIRED_COLUMNS.issubset(set(rows[0].keys()))
+    if not REQUIRED_COLUMNS.issubset(set(rows[0].keys())):
+        return False
+    if "image_set" in rows[0]:
+        return any(row.get("image_set") == image_set for row in rows)
+    return image_set.isdigit()
 
 
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     rows = []
     failures = 0
     for run_dir in discover_runs():
-        counts = component_counts(run_dir, args.iteration)
+        resolved_image_set = resolve_image_set(run_dir, image_set)
+        counts = component_counts(run_dir, resolved_image_set)
         if counts["R_low"] == 0 or counts["L_low"] != counts["R_low"]:
             rows.append(
                 {
                     "run": run_dir.name,
                     "status": "skip_incomplete",
+                    "requested_image_set": image_set,
+                    "target_image_set": resolved_image_set,
                     "returncode": "",
                     "R_low_count": counts["R_low"],
                     "L_low_count": counts["L_low"],
@@ -72,12 +84,11 @@ def main() -> int:
             )
             print(f"[skip incomplete] {relative(run_dir)}")
             continue
-        force_this_run = args.force or not has_required_schema(details_path(run_dir))
+        force_this_run = args.force or not has_required_schema(details_path(run_dir), resolved_image_set)
         command = [
             args.python,
             str(COMPARE_ANALYZER),
-            "--iteration",
-            str(args.iteration),
+            *analyzer_args_for_image_set(args, resolved_image_set),
             "--details",
             str(run_dir),
         ]
@@ -92,6 +103,8 @@ def main() -> int:
             {
                 "run": run_dir.name,
                 "status": "ok" if proc.returncode == 0 else "failed",
+                "requested_image_set": image_set,
+                "target_image_set": resolved_image_set,
                 "returncode": proc.returncode,
                 "report": relative(report_path(run_dir)),
                 "details": relative(details_path(run_dir)),

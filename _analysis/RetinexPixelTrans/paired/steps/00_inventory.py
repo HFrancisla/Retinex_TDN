@@ -8,6 +8,7 @@ from pathlib import Path
 
 from paired_steps_common import (
     RESULT_ROOT,
+    add_image_set_args,
     component_counts,
     config_fingerprint,
     details_path,
@@ -19,39 +20,42 @@ from paired_steps_common import (
     report_path,
     run_config,
     run_label,
+    selected_image_set,
+    synthesis_dir_for_image_set,
     write_csv,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     rows = []
     for run_dir in discover_runs():
         config = run_config(run_dir)
         fingerprint = config_fingerprint(config)
         iterations = iteration_dirs(run_dir)
-        counts = component_counts(run_dir, args.iteration)
+        counts = component_counts(run_dir, image_set)
         n_expected = max(counts.values()) if counts else 0
         complete_components = (
             n_expected > 0
             and all(counts[name] == n_expected for name in ("R_low", "L_low", "R_high", "L_high"))
         )
-        synthesis_dir = run_dir / "synthesis" / str(args.iteration)
+        synthesis_dir = synthesis_dir_for_image_set(run_dir, image_set)
         row = {
             "run": run_dir.name,
             "label": run_label(run_dir, config),
             "path": relative(run_dir),
             **fingerprint,
-            "available_iterations": ",".join(map(str, iterations)),
-            "target_iteration": args.iteration,
-            "has_target_iteration": args.iteration in iterations,
+            "available_image_sets": ",".join(map(str, iterations)),
+            "target_image_set": image_set,
+            "has_target_image_set": image_set in iterations,
             "R_low_count": counts["R_low"],
             "L_low_count": counts["L_low"],
             "R_high_count": counts["R_high"],
@@ -93,7 +97,7 @@ def main() -> int:
 
     incomplete = [
         row for row in rows
-        if not row["has_target_iteration"] or not row["components_complete"]
+        if not row["has_target_image_set"] or not row["components_complete"]
     ]
     missing_details = [row for row in rows if not row["has_decomp_details"]]
 
@@ -101,7 +105,7 @@ def main() -> int:
     md_lines = [
         "# Step 00 inventory",
         "",
-        f"Target iteration: `{args.iteration}`",
+        f"Target image set: `{image_set}`",
         f"Runs discovered: `{len(rows)}`",
         "",
         "## Comparable-field check",
@@ -115,7 +119,7 @@ def main() -> int:
             [
                 ("run", "run", ""),
                 ("label", "label", ""),
-                ("iter?", "has_target_iteration", ""),
+                ("img set?", "has_target_image_set", ""),
                 ("complete?", "components_complete", ""),
                 ("Rlow", "R_low_count", ""),
                 ("Rhigh", "R_high_count", ""),
@@ -136,7 +140,7 @@ def main() -> int:
                 incomplete,
                 [
                     ("run", "run", ""),
-                    ("iter?", "has_target_iteration", ""),
+                    ("img set?", "has_target_image_set", ""),
                     ("Rlow", "R_low_count", ""),
                     ("Llow", "L_low_count", ""),
                     ("Rhigh", "R_high_count", ""),

@@ -7,6 +7,7 @@ import argparse
 
 from pure_single_steps_common import (
     RESULT_ROOT,
+    add_image_set_args,
     component_counts,
     config_fingerprint,
     details_path,
@@ -19,36 +20,42 @@ from pure_single_steps_common import (
     report_path,
     run_config,
     run_label,
+    resolve_image_set,
+    selected_image_set,
+    synthesis_dir_for_image_set,
     write_csv,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     rows = []
     for run_dir in discover_runs():
         config = run_config(run_dir)
         fingerprint = config_fingerprint(config, run_dir.name)
         iterations = iteration_dirs(run_dir)
-        counts = component_counts(run_dir, args.iteration)
+        resolved_image_set = resolve_image_set(run_dir, image_set)
+        counts = component_counts(run_dir, resolved_image_set)
         n_expected = max(counts.values()) if counts else 0
         complete_components = n_expected > 0 and counts["R_low"] == n_expected and counts["L_low"] == n_expected
-        synthesis_dir = run_dir / "synthesis" / str(args.iteration)
+        synthesis_dir = synthesis_dir_for_image_set(run_dir, resolved_image_set)
         row = {
             "run": run_dir.name,
             "label": run_label(run_dir, config),
             "path": relative(run_dir),
             **fingerprint,
-            "available_iterations": ",".join(map(str, iterations)),
-            "target_iteration": args.iteration,
-            "has_target_iteration": args.iteration in iterations,
+            "available_image_sets": ",".join(map(str, iterations)),
+            "requested_image_set": image_set,
+            "target_image_set": resolved_image_set,
+            "has_target_image_set": resolved_image_set in iterations,
             "R_low_count": counts["R_low"],
             "L_low_count": counts["L_low"],
             "components_complete": complete_components,
@@ -63,7 +70,7 @@ def main() -> int:
             "has_last_model": (run_dir / "weights" / "last_model.pth").is_file(),
             **full_validation_metrics(run_dir),
         }
-        row["analysis_ready"] = bool(row["has_target_iteration"] and row["components_complete"])
+        row["analysis_ready"] = bool(row["has_target_image_set"] and row["components_complete"])
         rows.append(row)
 
     write_csv(RESULT_ROOT / "inventory.csv", rows)
@@ -73,7 +80,7 @@ def main() -> int:
     md_lines = [
         "# Step 00 pure-low-single inventory",
         "",
-        f"Target iteration: `{args.iteration}`",
+        f"Target image set: `{image_set}`",
         f"Runs discovered: `{len(rows)}`",
         "",
         "## Artifact summary",
@@ -84,7 +91,7 @@ def main() -> int:
                 ("dataset", "dataset", ""),
                 ("run", "run", ""),
                 ("label", "label", ""),
-                ("iter?", "has_target_iteration", ""),
+                ("img set?", "has_target_image_set", ""),
                 ("complete?", "components_complete", ""),
                 ("R", "R_low_count", ""),
                 ("L", "L_low_count", ""),
@@ -106,10 +113,10 @@ def main() -> int:
                 [
                     ("dataset", "dataset", ""),
                     ("run", "run", ""),
-                    ("iter?", "has_target_iteration", ""),
+                    ("img set?", "has_target_image_set", ""),
                     ("R", "R_low_count", ""),
                     ("L", "L_low_count", ""),
-                    ("available", "available_iterations", ""),
+                    ("available", "available_image_sets", ""),
                 ],
             ),
             "",

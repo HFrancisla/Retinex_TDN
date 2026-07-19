@@ -39,9 +39,13 @@ training:
   save_ckpt_interval: 500
   eval:
     eval_interval: 500
-    save_img_interval: 10000
+    save_img_interval: 0
     save_best_ckpt: true
-    keep_top_ckpt: 1
+    save_best_images: true
+    selection_metric: "total_loss"
+    selection_mode: "min"
+    keep_top_ckpt: 3
+    max_save_images: 100
     quick_val_size: 1000
     quick_val_crop_size: 512
     final_full_validation: true

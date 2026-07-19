@@ -13,8 +13,10 @@ import math
 
 from paired_steps_common import (
     RESULT_ROOT,
+    add_image_set_args,
     as_float,
     config_fingerprint,
+    detail_rows_for_image_set,
     details_path,
     discover_runs,
     ensure_output_dirs,
@@ -22,6 +24,7 @@ from paired_steps_common import (
     read_csv,
     run_config,
     run_label,
+    selected_image_set,
     summarize_metric,
     write_csv,
 )
@@ -73,7 +76,7 @@ REQUIRED_COLUMNS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     return parser.parse_args()
 
 
@@ -101,6 +104,7 @@ def add_rank(rows: list[dict], key: str, higher_is_better: bool, rank_key: str) 
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     summary_rows = []
     missing = []
     stale = []
@@ -114,9 +118,9 @@ def main() -> int:
         if not REQUIRED_COLUMNS.issubset(available_columns):
             stale.append(run_dir.name)
             continue
-        rows = [row for row in all_rows if int(float(row.get("iteration", -1))) == args.iteration]
+        rows = detail_rows_for_image_set(all_rows, args)
         if not rows:
-            missing.append(f"{run_dir.name} (no iteration {args.iteration})")
+            missing.append(f"{run_dir.name} (no image set {image_set})")
             continue
         config = run_config(run_dir)
         summary = {
@@ -183,7 +187,7 @@ def main() -> int:
     md_lines = [
         "# Step 02 corrected paired analysis",
         "",
-        f"Iteration: `{args.iteration}`",
+        f"Image set: `{image_set}`",
         "",
         "Primary rule: rank by how close `R_low` and `R_high` are to matched `I_high`, then use `R_low/R_high` consistency as a secondary criterion.",
         "",

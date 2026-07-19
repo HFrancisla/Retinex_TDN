@@ -18,6 +18,7 @@ STEP_ROOT = Path(__file__).resolve().parent
 RESULT_ROOT = STEP_ROOT / "results"
 FIG_ROOT = RESULT_ROOT / "figures"
 COMPARE_ANALYZER = ROOT / "_compare" / "analyze_decomposition.py"
+DEFAULT_IMAGE_SET = "auto"
 
 
 def ensure_output_dirs() -> None:
@@ -106,19 +107,99 @@ def run_label(run_dir: Path, config: dict[str, Any] | None = None) -> str:
     return f"r{recon}-a{anchor}-sm{smooth}{smooth_version}"
 
 
-def iteration_dirs(run_dir: Path) -> list[int]:
+def add_image_set_args(parser) -> None:
+    parser.add_argument(
+        "--image-set",
+        default=DEFAULT_IMAGE_SET,
+        help="image set to analyze; auto uses final_best when present, otherwise best",
+    )
+    parser.add_argument("--iteration", type=int, default=None)
+
+
+def is_selectable_image_set(name: str) -> bool:
+    return name in {"best", "final_best"} or name.isdigit()
+
+
+def selected_image_set(args) -> str:
+    return str(args.iteration) if args.iteration is not None else str(args.image_set)
+
+
+def analyzer_args_for_image_set(args, image_set: str | None = None) -> list[str]:
+    if args.iteration is not None:
+        return ["--iteration", str(args.iteration)]
+    resolved = str(image_set if image_set is not None else args.image_set)
+    if resolved == "auto":
+        return []
+    return ["--image-set", resolved]
+
+
+def detail_rows_for_image_set(
+    rows: list[dict[str, str]],
+    args,
+    image_set: str | None = None,
+) -> list[dict[str, str]]:
+    if args.iteration is not None:
+        return [row for row in rows if int(float(row.get("iteration", -1))) == args.iteration]
+    image_set = str(image_set if image_set is not None else args.image_set)
+    if image_set == "auto":
+        if rows and "image_set" in rows[0]:
+            sets = {row.get("image_set", "") for row in rows}
+            if "final_best" in sets:
+                return [row for row in rows if row.get("image_set") == "final_best"]
+            if "best" in sets:
+                return [row for row in rows if row.get("image_set") == "best"]
+        return rows
+    if rows and "image_set" in rows[0]:
+        return [row for row in rows if row.get("image_set") == image_set]
+    if image_set.isdigit():
+        return [row for row in rows if int(float(row.get("iteration", -1))) == int(image_set)]
+    return []
+
+
+def iteration_dirs(run_dir: Path) -> list[str]:
     img_root = run_dir / "img"
     if not img_root.is_dir():
         return []
-    return sorted(int(path.name) for path in img_root.iterdir() if path.is_dir() and path.name.isdigit())
+    return sorted(path.name for path in img_root.iterdir() if path.is_dir() and is_selectable_image_set(path.name))
 
 
-def component_counts(run_dir: Path, iteration: int) -> dict[str, int]:
-    image_dir = run_dir / "img" / str(iteration)
+def resolve_image_set(run_dir: Path, requested: str | int) -> str:
+    image_set = str(requested)
+    if image_set != "auto":
+        return image_set
+    names = iteration_dirs(run_dir)
+    if (run_dir / "final_full_validation.yaml").is_file() and "final_best" in names:
+        return "final_best"
+    if "best" in names:
+        return "best"
+    if "final_best" in names:
+        return "final_best"
+    numeric = sorted((name for name in names if name.isdigit()), key=lambda value: int(value))
+    return numeric[-1] if numeric else image_set
+
+
+def component_counts(run_dir: Path, image_set: str | int) -> dict[str, int]:
+    image_dir = run_dir / "img" / str(image_set)
     return {
         suffix: len(list(image_dir.glob(f"*_{suffix}.png"))) if image_dir.is_dir() else 0
         for suffix in ("R_low", "L_low")
     }
+
+
+def synthesis_dir_for_image_set(run_dir: Path, image_set: str | int) -> Path:
+    image_set = str(image_set)
+    direct = run_dir / "synthesis" / image_set
+    if direct.is_dir():
+        return direct
+    metadata_path = run_dir / "img" / image_set / "_image_set.yaml"
+    if metadata_path.is_file():
+        metadata = load_yaml(metadata_path)
+        checkpoint_step = metadata.get("checkpoint_step")
+        if checkpoint_step is not None:
+            fallback = run_dir / "synthesis" / str(checkpoint_step)
+            if fallback.is_dir():
+                return fallback
+    return direct
 
 
 def details_path(run_dir: Path, prefix: str = "decomposition_analysis") -> Path:

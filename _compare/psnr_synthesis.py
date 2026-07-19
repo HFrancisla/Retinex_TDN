@@ -34,6 +34,23 @@ from analyze_decomposition import (
 ROOT = Path(__file__).resolve().parent.parent
 EXP_DIR = Path(os.environ.get("RETINEX_SYNTH_EXP_DIR", ROOT / "experiments"))
 FORCE = os.environ.get("RETINEX_SYNTH_FORCE", "0") == "1"
+MAX_ITER = int(os.environ.get("RETINEX_SYNTH_MAX_ITER", "100000"))
+PREFERRED_IMAGE_SETS = ("final_best", "best")
+
+
+def is_selectable_image_set(name: str) -> bool:
+    if name in PREFERRED_IMAGE_SETS:
+        return True
+    return name.isdigit() and int(name) <= MAX_ITER
+
+
+def image_set_sort_key(path: Path) -> tuple[int, int, int, str]:
+    name = path.name
+    if name in PREFERRED_IMAGE_SETS:
+        return (0, PREFERRED_IMAGE_SETS.index(name), 0, "")
+    if name.isdigit():
+        return (1, 0, int(name), "")
+    return (2, 0, 0, name)
 
 
 def read_color(path: Path) -> np.ndarray:
@@ -73,8 +90,13 @@ def process_run(run_dir: Path) -> None:
     mode = str(config.get("data", {}).get("mode", "unknown"))
     records = resolve_validation_records(run_dir, config)
     iteration_dirs = sorted(
-        (path for path in synthesis_root.iterdir() if path.is_dir() and path.name.isdigit()),
-        key=lambda path: int(path.name),
+        (
+            path for path in synthesis_root.iterdir()
+            if path.is_dir()
+            and is_selectable_image_set(path.name)
+            and (run_dir / "img" / path.name).is_dir()
+        ),
+        key=image_set_sort_key,
     )
     report = run_dir / "synthesis_compare.txt"
     sources = [Path(__file__), SCRIPT_DIR / "analyze_decomposition.py", config_path]
@@ -87,8 +109,7 @@ def process_run(run_dir: Path) -> None:
     for iteration_dir in iteration_dirs:
         sources.extend(iteration_dir.glob("*.png"))
         image_dir = run_dir / "img" / iteration_dir.name
-        if image_dir.is_dir():
-            sources.extend(image_dir.glob("*.png"))
+        sources.extend(image_dir.glob("*.png"))
     sources.extend(record.low for record in records)
     sources.extend(record.high for record in records if record.high is not None)
     if report_is_fresh(report, sources):
@@ -98,8 +119,6 @@ def process_run(run_dir: Path) -> None:
     rows: list[dict[str, int | float]] = []
     for iteration_dir in iteration_dirs:
         image_dir = run_dir / "img" / iteration_dir.name
-        if not image_dir.is_dir():
-            raise FileNotFoundError(f"synthesis has no matching img directory: {image_dir}")
         iteration_records = records_for_iteration(run_dir, image_dir, records)
         r_low_indices = set(indexed_paths(image_dir, "R_low"))
         l_low_indices = set(indexed_paths(image_dir, "L_low"))
@@ -155,8 +174,8 @@ def process_run(run_dir: Path) -> None:
         if not low_psnr:
             continue
         low_mean, low_std = summarize(low_psnr)
-        row: dict[str, int | float] = {
-            "iteration": int(iteration_dir.name), "n_low": len(low_psnr),
+        row: dict[str, str | int | float] = {
+            "iteration": iteration_dir.name, "n_low": len(low_psnr),
             "low_psnr_mean": low_mean, "low_psnr_std": low_std,
             "low_l1_mean": float(np.mean(low_l1)),
             "n_high": len(high_psnr),
@@ -173,7 +192,7 @@ def process_run(run_dir: Path) -> None:
         f"# {run_dir.name}", f"# mode: {mode}",
         f"# source_signature: {sources_signature(sources)}",
         "# Reconstruction integrity only: high PSNR does not imply correct R/L semantics.", "",
-        f"{'iter':>10}  {'n_low':>6}  {'Slo_PSNR':>10}  {'std':>8}  {'Slo_L1':>9}  "
+        f"{'img_set':>10}  {'n_low':>6}  {'Slo_PSNR':>10}  {'std':>8}  {'Slo_L1':>9}  "
         f"{'n_high':>7}  {'Shi_PSNR':>10}  {'std':>8}  {'Shi_L1':>9}",
         f"{'-'*10}  {'-'*6}  {'-'*10}  {'-'*8}  {'-'*9}  "
         f"{'-'*7}  {'-'*10}  {'-'*8}  {'-'*9}",
@@ -183,7 +202,7 @@ def process_run(run_dir: Path) -> None:
             item = row.get(key)
             return f"{item:{width}{spec}}" if item is not None else f"{'-':>{width}}"
         lines.append(
-            f"{row['iteration']:10d}  {row['n_low']:6d}  "
+            f"{str(row['iteration']):>10}  {row['n_low']:6d}  "
             f"{row['low_psnr_mean']:10.2f}  {row['low_psnr_std']:8.2f}  "
             f"{row['low_l1_mean']:9.5f}  {row['n_high']:7d}  "
             f"{value('high_psnr_mean', '.2f', 10)}  {value('high_psnr_std', '.2f', 8)}  "

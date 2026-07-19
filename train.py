@@ -410,7 +410,12 @@ def main(args):
     # ---- 加载数据 ----
     data_path = data_cfg.get("path", "")
     data_mode = data_cfg["mode"]
-    if data_mode in ("pure_low_single", "pure_low_double"):
+    if data_mode == "pure_low_single":
+        train_low_path, val_low_path, val_high_path = read_pure_low_data(
+            data_path, include_val_high_ref=True
+        )
+        train_high_path = []
+    elif data_mode == "pure_low_double":
         train_low_path, val_low_path = read_pure_low_data(data_path)
         train_high_path, val_high_path = [], []
     else:
@@ -431,8 +436,8 @@ def main(args):
         val_low_path, quick_low_indices = _fixed_validation_subset(
             full_val_low_path, quick_val_size, seed
         )
-        if data_mode == 'paired':
-            # paired 的 low/high 必须保持同一索引。
+        if data_mode in ('paired', 'pure_low_single') and full_val_high_path:
+            # paired/high-ref validation 的 low/high 必须保持同一索引。
             val_high_path = [full_val_high_path[index] for index in quick_low_indices]
         elif full_val_high_path:
             val_high_path, _ = _fixed_validation_subset(
@@ -518,25 +523,42 @@ def main(args):
     elif data_mode == "pure_low_single":
         from torchvision import transforms as torchvision_T
         quick_val_transforms = []
+        quick_val_pair_transforms = []
         if quick_val_enabled:
             quick_val_transforms.append(torchvision_T.CenterCrop(quick_val_crop_size))
+            quick_val_pair_transforms.append(T.CenterCrop(quick_val_crop_size))
         quick_val_transforms.append(torchvision_T.ToTensor())
+        quick_val_pair_transforms.append(T.ToTensor())
         data_transform = {
             "train": torchvision_T.Compose([torchvision_T.RandomCrop(crop_size, pad_if_needed=True),
                                               torchvision_T.RandomHorizontalFlip(0.5),
                                               torchvision_T.RandomVerticalFlip(0.5),
                                               torchvision_T.ToTensor()]),
             "val": torchvision_T.Compose(quick_val_transforms),
+            "val_pair": T.Compose(quick_val_pair_transforms),
             "val_full": torchvision_T.Compose([torchvision_T.ToTensor()]),
+            "val_full_pair": T.Compose([T.ToTensor()]),
         }
         train_dataset = PureLowSingleDataSet(images_low_path=train_low_path,
                                               transform=data_transform["train"])
-        val_dataset = PureLowSingleDataSet(images_low_path=val_low_path,
-                                            transform=data_transform["val"])
-        full_val_dataset = PureLowSingleDataSet(
-            images_low_path=full_val_low_path,
-            transform=data_transform["val_full"],
-        ) if final_full_validation else None
+        if val_high_path:
+            val_dataset = MyDataSet(
+                images_low_path=val_low_path,
+                images_high_path=val_high_path,
+                transform=data_transform["val_pair"],
+            )
+            full_val_dataset = MyDataSet(
+                images_low_path=full_val_low_path,
+                images_high_path=full_val_high_path,
+                transform=data_transform["val_full_pair"],
+            ) if final_full_validation else None
+        else:
+            val_dataset = PureLowSingleDataSet(images_low_path=val_low_path,
+                                                transform=data_transform["val"])
+            full_val_dataset = PureLowSingleDataSet(
+                images_low_path=full_val_low_path,
+                transform=data_transform["val_full"],
+            ) if final_full_validation else None
     else:
         from torchvision import transforms as torchvision_T
         quick_val_transforms = []
@@ -677,8 +699,10 @@ def main(args):
     start_iter = 0
     eval_cfg = train_cfg.get("eval", {})
     selection_metric = eval_cfg.get('selection_metric', 'total_loss')
+    higher_is_better_metrics = ('psnr', 'ssim', 'corr')
     selection_mode = eval_cfg.get(
-        'selection_mode', 'max' if selection_metric == 'psnr' else 'min'
+        'selection_mode',
+        'max' if selection_metric.endswith(higher_is_better_metrics) else 'min',
     )
     if selection_mode not in ('min', 'max'):
         raise ValueError("training.eval.selection_mode must be 'min' or 'max'")
@@ -725,6 +749,7 @@ def main(args):
     # 磁盘清理策略
     keep_top_ckpt = eval_cfg.get("keep_top_ckpt", 2)
     max_save_images = eval_cfg.get("max_save_images", 250)
+    save_best_images = eval_cfg.get("save_best_images", save_img_interval > 0)
 
     saved_ckpt_files = checkpoint.get('saved_ckpt_files', []) if checkpoint_path else []
     saved_img_folders = checkpoint.get('saved_img_folders', []) if checkpoint_path else []
@@ -735,6 +760,7 @@ def main(args):
     print(f"save_img_interval: {save_img_interval} steps")
     print(f"keep_top_ckpt: {keep_top_ckpt} (0=keep all)")
     print(f"max_save_images: {max_save_images}")
+    print(f"save_best_images: {save_best_images}")
     if quick_val_enabled:
         print(
             f"two-stage validation: quick={len(val_dataset)} samples at "
@@ -874,16 +900,19 @@ def main(args):
         if val_psnr is not None:
             tb_writer.add_scalar('val/psnr', val_psnr, step)
 
+        score = _selection_value(val_metrics, val_psnr)
+
         parts = [_weighted_loss_summary(val_metrics)]
         if val_psnr is not None:
             parts.append(f'PSNR(proxy): {val_psnr:.2f}dB')
+        if selection_metric != 'psnr':
+            parts.append(f'{selection_metric}: {score:.4f}')
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         print(f"[{now}] [eval  step {step:>6d}] " + ' | '.join(parts))
 
         last_val_metrics = val_metrics
         last_val_psnr = val_psnr
         last_eval_iter = step
-        score = _selection_value(val_metrics, val_psnr)
 
         if _is_better(score, best_metric_value):
             best_metric_value = score
@@ -904,6 +933,71 @@ def main(args):
                     shutil.rmtree(worst_folder)
                     print(f'[cleanup] Removed visualization folder: {worst_folder}')
         return score
+
+    def _write_image_set_metadata(image_dir, metadata):
+        os.makedirs(image_dir, exist_ok=True)
+        metadata_path = os.path.join(image_dir, '_image_set.yaml')
+        with open(metadata_path, 'w', encoding='utf-8') as metadata_file:
+            yaml.safe_dump(
+                metadata, metadata_file, default_flow_style=False,
+                allow_unicode=True, sort_keys=False,
+            )
+
+    def _publish_checkpoint_images(
+        checkpoint_path, image_set_name, data_loader, sample_count,
+        transform_label, checkpoint_label=None,
+    ):
+        if not save_best_images:
+            return None
+        if not os.path.isfile(checkpoint_path):
+            return None
+
+        image_dir = os.path.join(file_img_path, image_set_name)
+        if os.path.isdir(image_dir):
+            shutil.rmtree(image_dir)
+
+        checkpoint_data = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+        load_target = model.module if use_dp else model
+        load_target.load_state_dict(checkpoint_data['model'])
+        checkpoint_step = checkpoint_data.get('global_iter')
+        print(
+            f'[publish images] {image_set_name}: '
+            f'checkpoint={os.path.basename(checkpoint_path)} | step={checkpoint_step}'
+        )
+        image_metrics, image_psnr = evaluate(
+            model=model,
+            data_loader=data_loader,
+            device=device,
+            lr=optimizer.param_groups[0]['lr'],
+            filefold_path=file_img_path,
+            loss_function=loss_function,
+            save_images=True,
+            global_iter=image_set_name,
+            max_save_images=max_save_images,
+        )
+        if not image_metrics:
+            raise ValueError(f'{image_set_name} image validation produced no samples')
+        image_score = _selection_value(image_metrics, image_psnr)
+        metadata = {
+            'image_set': image_set_name,
+            'checkpoint': checkpoint_label or os.path.basename(checkpoint_path),
+            'checkpoint_step': checkpoint_step,
+            'selection_metric': selection_metric,
+            'selection_mode': selection_mode,
+            'selection_value': image_score,
+            'metrics': image_metrics,
+            'psnr': image_psnr,
+            'sample_count': sample_count,
+            'transform': transform_label,
+        }
+        _write_image_set_metadata(image_dir, metadata)
+        print(
+            f'[publish images] {image_set_name}: {selection_metric}={image_score:.6f} '
+            f'| dir={image_dir}'
+        )
+        return metadata
 
     while global_iter < max_iterations:
         # 获取下一个 batch，epoch 结束时重新 shuffle
@@ -999,19 +1093,48 @@ def main(args):
     torch.save(_checkpoint_payload(global_iter), last_save_path)
     print(f'Saved final model: {last_save_path}')
 
+    best_save_path = os.path.join(file_weights_path, 'best_model.pth')
+    quick_best_image_metadata = _publish_checkpoint_images(
+        best_save_path,
+        'best',
+        val_loader,
+        len(val_dataset),
+        'quick_validation' if quick_val_enabled else 'validation',
+        checkpoint_label='best_model.pth',
+    )
+
     if final_full_validation:
         if full_val_loader is None:
             raise RuntimeError('final_full_validation is enabled but full_val_loader is unavailable')
 
-        best_save_path = os.path.join(file_weights_path, 'best_model.pth')
         candidate_checkpoints = []
-        seen_candidate_paths = set()
-        for quick_score, checkpoint_step, candidate_path in saved_ckpt_files:
+        seen_candidate_keys = set()
+
+        def add_candidate(quick_score, checkpoint_step, candidate_path):
             candidate_path = os.path.abspath(candidate_path)
-            if candidate_path in seen_candidate_paths or not os.path.isfile(candidate_path):
-                continue
-            seen_candidate_paths.add(candidate_path)
-            candidate_checkpoints.append((quick_score, checkpoint_step, candidate_path))
+            if not os.path.isfile(candidate_path):
+                return
+            candidate_checkpoint = torch.load(
+                candidate_path, map_location='cpu', weights_only=False
+            )
+            actual_step = candidate_checkpoint.get('global_iter', checkpoint_step)
+            key = (actual_step, round(float(quick_score), 12))
+            if key in seen_candidate_keys:
+                return
+            seen_candidate_keys.add(key)
+            candidate_checkpoints.append((quick_score, actual_step, candidate_path))
+
+        for quick_score, checkpoint_step, candidate_path in saved_ckpt_files:
+            add_candidate(quick_score, checkpoint_step, candidate_path)
+        if os.path.isfile(best_save_path):
+            best_checkpoint = torch.load(
+                best_save_path, map_location='cpu', weights_only=False
+            )
+            add_candidate(
+                best_checkpoint.get('best_metric_value', best_metric_value),
+                best_checkpoint.get('global_iter', global_iter),
+                best_save_path,
+            )
 
         # save_ckpt_interval=0 或短冒烟训练没有间隔 checkpoint 时，保持原行为，
         # 至少完整验证 quick best（若未保存则退回 last）。
@@ -1036,9 +1159,7 @@ def main(args):
             'transform=full_resolution'
         )
 
-        final_save_images = (
-            save_img_interval > 0 and global_iter % save_img_interval == 0
-        )
+        final_save_images = save_best_images
         candidate_image_root = os.path.join(file_img_path, '.final_candidates')
         if os.path.isdir(candidate_image_root):
             shutil.rmtree(candidate_image_root)
@@ -1107,6 +1228,8 @@ def main(args):
             candidate_parts = [_weighted_loss_summary(full_metrics)]
             if full_psnr is not None:
                 candidate_parts.append(f'PSNR(proxy): {full_psnr:.2f}dB')
+            if selection_metric != 'psnr':
+                candidate_parts.append(f'{selection_metric}: {full_score:.4f}')
             print(
                 f'[final full candidate step {checkpoint_step}] '
                 + ' | '.join(candidate_parts)
@@ -1134,13 +1257,28 @@ def main(args):
 
         published_image_dir = None
         if final_save_images:
-            published_image_dir = os.path.join(file_img_path, str(global_iter))
+            published_image_dir = os.path.join(file_img_path, 'final_best')
             if os.path.isdir(published_image_dir):
                 shutil.rmtree(published_image_dir)
             if not winner['image_dir'] or not os.path.isdir(winner['image_dir']):
                 raise RuntimeError('winning candidate image directory is missing')
             shutil.move(winner['image_dir'], published_image_dir)
             shutil.rmtree(candidate_image_root, ignore_errors=True)
+            _write_image_set_metadata(
+                published_image_dir,
+                {
+                    'image_set': 'final_best',
+                    'checkpoint': os.path.basename(winner['checkpoint_path']),
+                    'checkpoint_step': winner['checkpoint_step'],
+                    'selection_metric': selection_metric,
+                    'selection_mode': selection_mode,
+                    'selection_value': winner['full_selection_value'],
+                    'metrics': winner['metrics'],
+                    'psnr': winner['psnr'],
+                    'sample_count': len(full_val_dataset),
+                    'transform': 'full_resolution',
+                },
+            )
 
         for result in candidate_results:
             for key in ('checkpoint_path', 'image_dir'):
@@ -1173,6 +1311,10 @@ def main(args):
             'selected_checkpoint': winner['checkpoint'],
             'selected_checkpoint_step': winner['checkpoint_step'],
             'selected_full_value': winner['full_selection_value'],
+            'quick_best_image_dir': (
+                os.path.relpath(os.path.join(file_img_path, 'best'), filefold_path)
+                if quick_best_image_metadata is not None else None
+            ),
             'published_image_dir': (
                 os.path.relpath(published_image_dir, filefold_path)
                 if published_image_dir is not None else None

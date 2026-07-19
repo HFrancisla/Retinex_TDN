@@ -34,6 +34,19 @@ from skimage.metrics import structural_similarity
 DEFAULT_PREFIX = "decomposition_analysis"
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 ANALYSIS_VERSION = 2
+PREFERRED_IMAGE_SETS = ("final_best", "best")
+
+
+def image_set_name_sort_key(name: str):
+    if name in PREFERRED_IMAGE_SETS:
+        return (0, PREFERRED_IMAGE_SETS.index(name), 0, "")
+    if name.isdigit():
+        return (1, 0, int(name), "")
+    return (2, 0, 0, name)
+
+
+def is_selectable_image_set(name: str) -> bool:
+    return name in PREFERRED_IMAGE_SETS or name.isdigit()
 
 
 class InputRecord(NamedTuple):
@@ -51,7 +64,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--iteration", type=int, action="append",
-        help="analyze only this iteration; repeatable (default: every numeric img directory)",
+        help="analyze only this numeric iteration; repeatable (default: final_best if present, otherwise best)",
+    )
+    parser.add_argument(
+        "--image-set", action="append",
+        help="analyze this img image-set directory by name, e.g. best, final_best, or 2000",
+    )
+    parser.add_argument(
+        "--all-image-sets", action="store_true",
+        help="analyze every available img image set, including named sets and numeric iterations",
     )
     parser.add_argument("--output-prefix", default=DEFAULT_PREFIX)
     parser.add_argument("--details", action="store_true", help="write per-image CSV")
@@ -78,22 +99,110 @@ def load_config(experiment_dir: Path) -> dict:
         return yaml.safe_load(handle) or {}
 
 
-def find_iteration_dirs(experiment_dir: Path, selected: list[int] | None) -> list[Path]:
+def find_iteration_dirs(
+    experiment_dir: Path,
+    selected: list[int] | None,
+    selected_image_sets: list[str] | None = None,
+    all_image_sets: bool = False,
+) -> tuple[list[Path], list[str]]:
     root = experiment_dir / "img"
+    warnings: list[str] = []
     if not root.is_dir():
         raise FileNotFoundError(f"missing img directory: {root}")
     directories = {
         int(path.name): path for path in root.iterdir()
         if path.is_dir() and path.name.isdigit()
     }
+    named_dirs = {
+        path.name: path for path in root.iterdir()
+        if path.is_dir() and not path.name.isdigit() and is_selectable_image_set(path.name)
+    }
+    if not directories and not named_dirs:
+        raise FileNotFoundError(f"no image-set directory below: {root}")
+
+    def preferred_named_dir() -> Path | None:
+        if "final_best" in named_dirs:
+            return named_dirs["final_best"]
+        if "best" in named_dirs:
+            return named_dirs["best"]
+        final_report = experiment_dir / "final_full_validation.yaml"
+        if final_report.is_file():
+            report = yaml.safe_load(final_report.read_text(encoding="utf-8")) or {}
+            published = report.get("published_image_dir")
+            if published:
+                candidate = experiment_dir / str(published)
+                if candidate.is_dir():
+                    return candidate
+        return None
+
+    if selected_image_sets:
+        result_dirs: list[Path] = []
+        for name in dict.fromkeys(selected_image_sets):
+            if name.isdigit() and int(name) in directories:
+                result_dirs.append(directories[int(name)])
+            elif name in named_dirs:
+                result_dirs.append(named_dirs[name])
+            else:
+                raise FileNotFoundError(f"requested image set {name!r} not found below: {root}")
+        return result_dirs, warnings
+
     if selected:
-        missing = sorted(set(selected) - directories.keys())
-        if missing:
-            raise FileNotFoundError(f"missing iteration directories: {missing}")
-        return [directories[value] for value in sorted(set(selected))]
-    if not directories:
-        raise FileNotFoundError(f"no numeric iteration directory below: {root}")
-    return [directories[value] for value in sorted(directories)]
+        result_dirs = []
+        available = sorted(directories.keys())
+        for value in sorted(set(selected)):
+            if value in directories:
+                result_dirs.append(directories[value])
+            elif preferred := preferred_named_dir():
+                warn_msg = (
+                    f"requested iteration {value} not found for {experiment_dir.name}, "
+                    f"using published image set: {preferred.name}"
+                )
+                print(f"[WARN] {warn_msg}", file=sys.stderr)
+                warnings.append(warn_msg)
+                result_dirs.append(preferred)
+            else:
+                if not available:
+                    raise FileNotFoundError(
+                        f"requested iteration {value} not found and no numeric fallback exists: {root}"
+                    )
+                fallback_val = min(available, key=lambda x: abs(x - value))
+                warn_msg = (
+                    f"requested iteration {value} not found for {experiment_dir.name}, "
+                    f"falling back to closest available: {fallback_val}"
+                )
+                print(f"[WARN] {warn_msg}", file=sys.stderr)
+                warnings.append(warn_msg)
+                result_dirs.append(directories[fallback_val])
+        # Deduplicate while preserving order
+        unique_dirs = []
+        for d in result_dirs:
+            if d not in unique_dirs:
+                unique_dirs.append(d)
+        return unique_dirs, warnings
+
+    if all_image_sets:
+        ordered = [named_dirs[name] for name in sorted(named_dirs, key=image_set_name_sort_key)]
+        ordered.extend(directories[value] for value in sorted(directories))
+        return ordered, warnings
+
+    if preferred := preferred_named_dir():
+        return [preferred], warnings
+    return [directories[value] for value in sorted(directories)], warnings
+
+
+def iteration_value(iteration_dir: Path) -> int:
+    if iteration_dir.name.isdigit():
+        return int(iteration_dir.name)
+    metadata_path = iteration_dir / "_image_set.yaml"
+    if metadata_path.is_file():
+        metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8")) or {}
+        checkpoint_step = metadata.get("checkpoint_step")
+        if checkpoint_step is not None:
+            return int(checkpoint_step)
+    raise ValueError(
+        f"non-numeric image directory needs _image_set.yaml with checkpoint_step: "
+        f"{iteration_dir}"
+    )
 
 
 def _image_files(directory: Path, required: bool = True) -> list[Path]:
@@ -419,7 +528,9 @@ def analyze_iteration(
         if r_low.shape[:2] != l_low.shape:
             raise ValueError(f"R_low/L_low shape mismatch at index {index}")
         row: dict[str, int | float | str] = {
-            "iteration": int(iteration_dir.name), "image_index": index,
+            "iteration": iteration_value(iteration_dir),
+            "image_set": iteration_dir.name,
+            "image_index": index,
         }
         row.update(reflectance_metrics(r_low, "r_low"))
         row.update(illumination_metrics(l_low, "l_low"))
@@ -521,7 +632,7 @@ def summarize(rows: list[dict]) -> list[dict]:
         }
         keys = sorted(set().union(*(row.keys() for row in iteration_rows)))
         for key in keys:
-            if key in {"iteration", "image_index", "input_low_file", "input_high_file"}:
+            if key in {"iteration", "image_set", "image_index", "input_low_file", "input_high_file"}:
                 continue
             values = _finite([float(row[key]) for row in iteration_rows if key in row])
             if not len(values):
@@ -672,7 +783,12 @@ def main() -> int:
         anchor_version = str(loss.get("anchor_version", "v2"))
         loss_mode = str(loss.get("mode", ""))
         l_type = "point" if loss_mode.endswith("_point") else "pixel"
-        iteration_dirs = find_iteration_dirs(experiment_dir, args.iteration)
+        iteration_dirs, init_warnings = find_iteration_dirs(
+            experiment_dir,
+            args.iteration,
+            selected_image_sets=args.image_set,
+            all_image_sets=args.all_image_sets,
+        )
         full_records = resolve_validation_records(experiment_dir, config)
         report_path = experiment_dir / f"{args.output_prefix}.txt"
 
@@ -685,6 +801,9 @@ def main() -> int:
         )
         for directory in iteration_dirs:
             source_paths.extend(directory.glob("*.png"))
+            metadata_path = directory / "_image_set.yaml"
+            if metadata_path.is_file():
+                source_paths.append(metadata_path)
         source_paths.extend(record.low for record in full_records)
         source_paths.extend(record.high for record in full_records if record.high is not None)
         details_path = experiment_dir / f"{args.output_prefix}_details.csv"
@@ -694,7 +813,7 @@ def main() -> int:
             return 0
 
         detail_rows: list[dict] = []
-        warnings: list[str] = []
+        warnings: list[str] = list(init_warnings)
         for iteration_dir in iteration_dirs:
             records = records_for_iteration(experiment_dir, iteration_dir, full_records)
             rows, iteration_warnings = analyze_iteration(

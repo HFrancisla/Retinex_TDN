@@ -14,10 +14,11 @@ R: 3 通道彩色反射图 [0,1]。L: 单通道光照图 [0,1]（保存时复制
     RETINEX_SYNTH_EXP_DIR   实验根目录 (默认 ../experiments)
     RETINEX_SYNTH_FORCE     设为 1 时强制重建
 
-输出: img/ 同级 → synthesis/{iter}/；仅跳过比对应 R/L 更新的有效文件。
+输出: img/ 同级 → synthesis/{image_set}/；仅跳过比对应 R/L 更新的有效文件。
 """
 
 import os
+import shutil
 import sys
 import cv2
 import numpy as np
@@ -27,7 +28,7 @@ from pathlib import Path
 # 环境变量配置（脚本开头可修改）
 # ============================================================
 MAX_ITER: int = int(os.environ.get("RETINEX_SYNTH_MAX_ITER", "100000"))
-"""最大处理的训练轮次。只处理目录名 ≤ 此值的迭代。"""
+"""最大处理的训练轮次。仅限制数字 image set；best/final_best 始终处理。"""
 
 FORCE: bool = os.environ.get("RETINEX_SYNTH_FORCE", "0") == "1"
 """为 true 时无条件重建已有 synthesis 文件。"""
@@ -38,6 +39,23 @@ EXPERIMENTS_DIR: str = os.environ.get(
 )
 """实验根目录路径。"""
 # ============================================================
+
+PREFERRED_IMAGE_SETS = ("final_best", "best")
+
+
+def is_selectable_image_set(name: str) -> bool:
+    if name in PREFERRED_IMAGE_SETS:
+        return True
+    return name.isdigit() and int(name) <= MAX_ITER
+
+
+def image_set_sort_key(path: Path) -> tuple[int, int, int, str]:
+    name = path.name
+    if name in PREFERRED_IMAGE_SETS:
+        return (0, PREFERRED_IMAGE_SETS.index(name), 0, "")
+    if name.isdigit():
+        return (1, 0, int(name), "")
+    return (2, 0, 0, name)
 
 
 def synthesize_and_save(r_path: Path, l_path: Path, out_path: Path) -> bool:
@@ -134,7 +152,7 @@ def process_iteration(iter_dir: Path, out_iter_dir: Path) -> dict:
 
 
 def process_experiment_run(run_dir: Path) -> None:
-    """处理单个实验 run 目录下所有 ≤ MAX_ITER 的迭代。"""
+    """处理单个实验 run 目录下所有可选 image set。"""
     img_dir = run_dir / "img"
     synthesis_dir = run_dir / "synthesis"
 
@@ -143,14 +161,24 @@ def process_experiment_run(run_dir: Path) -> None:
         return
 
     iter_dirs = sorted(
-        [d for d in img_dir.iterdir() if d.is_dir() and d.name.isdigit()],
-        key=lambda d: int(d.name),
+        [d for d in img_dir.iterdir() if d.is_dir() and is_selectable_image_set(d.name)],
+        key=image_set_sort_key,
     )
-    iter_dirs = [d for d in iter_dirs if int(d.name) <= MAX_ITER]
 
     if not iter_dirs:
-        print(f"  [SKIP] 无迭代目录 ≤ {MAX_ITER}")
+        print(f"  [SKIP] 无可用 image set（best/final_best 或数字目录 ≤ {MAX_ITER}）")
         return
+
+    valid_image_sets = {path.name for path in iter_dirs}
+    if synthesis_dir.is_dir():
+        for stale_dir in sorted(synthesis_dir.iterdir(), key=image_set_sort_key):
+            if (
+                stale_dir.is_dir()
+                and is_selectable_image_set(stale_dir.name)
+                and stale_dir.name not in valid_image_sets
+            ):
+                shutil.rmtree(stale_dir)
+                print(f"  [REMOVE] 孤立 synthesis 目录: {stale_dir.name}")
 
     total_low, total_high = 0, 0
 
@@ -165,7 +193,7 @@ def process_experiment_run(run_dir: Path) -> None:
         parts = [f"low={complete_low} (更新 {n_low})"]
         if list(iter_dir.glob("*_R_high.png")):
             parts.append(f"high={complete_high} (更新 {n_high})")
-        print(f"  [iter {iter_dir.name}] " + ", ".join(parts))
+        print(f"  [image set {iter_dir.name}] " + ", ".join(parts))
 
         total_low += complete_low
         total_high += complete_high

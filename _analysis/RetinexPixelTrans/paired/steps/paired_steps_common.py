@@ -18,6 +18,7 @@ STEP_ROOT = Path(__file__).resolve().parent
 RESULT_ROOT = STEP_ROOT / "results"
 FIG_ROOT = RESULT_ROOT / "figures"
 COMPARE_ANALYZER = ROOT / "_compare" / "analyze_decomposition.py"
+DEFAULT_IMAGE_SET = "best"
 
 FLOAT_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 
@@ -97,23 +98,65 @@ def infer_smooth_version(run_name: str) -> str:
     return f"v{match.group(1)}" if match else "v1"
 
 
-def iteration_dirs(run_dir: Path) -> list[int]:
+def add_image_set_args(parser) -> None:
+    parser.add_argument("--image-set", default=DEFAULT_IMAGE_SET)
+    parser.add_argument("--iteration", type=int, default=None)
+
+
+def is_selectable_image_set(name: str) -> bool:
+    return name in {DEFAULT_IMAGE_SET, "final_best"} or name.isdigit()
+
+
+def selected_image_set(args) -> str:
+    return str(args.iteration) if args.iteration is not None else str(args.image_set)
+
+
+def analyzer_args_for_image_set(args) -> list[str]:
+    if args.iteration is not None:
+        return ["--iteration", str(args.iteration)]
+    return ["--image-set", str(args.image_set)]
+
+
+def detail_rows_for_image_set(rows: list[dict[str, str]], args) -> list[dict[str, str]]:
+    if args.iteration is not None:
+        return [row for row in rows if int(float(row.get("iteration", -1))) == args.iteration]
+    image_set = str(args.image_set)
+    if rows and "image_set" in rows[0]:
+        return [row for row in rows if row.get("image_set") == image_set]
+    if image_set.isdigit():
+        return [row for row in rows if int(float(row.get("iteration", -1))) == int(image_set)]
+    return []
+
+
+def iteration_dirs(run_dir: Path) -> list[str]:
     img_root = run_dir / "img"
     if not img_root.is_dir():
         return []
-    values = []
-    for path in img_root.iterdir():
-        if path.is_dir() and path.name.isdigit():
-            values.append(int(path.name))
-    return sorted(values)
+    return sorted(path.name for path in img_root.iterdir() if path.is_dir() and is_selectable_image_set(path.name))
 
 
-def component_counts(run_dir: Path, iteration: int) -> dict[str, int]:
-    image_dir = run_dir / "img" / str(iteration)
+def component_counts(run_dir: Path, image_set: str | int) -> dict[str, int]:
+    image_dir = run_dir / "img" / str(image_set)
     counts: dict[str, int] = {}
     for suffix in ("R_low", "L_low", "R_high", "L_high"):
         counts[suffix] = len(list(image_dir.glob(f"*_{suffix}.png"))) if image_dir.is_dir() else 0
     return counts
+
+
+def synthesis_dir_for_image_set(run_dir: Path, image_set: str | int) -> Path:
+    image_set = str(image_set)
+    direct = run_dir / "synthesis" / image_set
+    if direct.is_dir():
+        return direct
+    metadata_path = run_dir / "img" / image_set / "_image_set.yaml"
+    if metadata_path.is_file():
+        metadata = load_yaml(metadata_path)
+        checkpoint_step = metadata.get("checkpoint_step")
+        if checkpoint_step is not None:
+            fallback = run_dir / "synthesis" / str(checkpoint_step)
+            if fallback.is_dir():
+                return fallback
+    return direct
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:

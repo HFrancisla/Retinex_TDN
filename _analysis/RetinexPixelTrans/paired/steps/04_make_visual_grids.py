@@ -15,19 +15,22 @@ from paired_steps_common import (
     EXP_ROOT,
     FIG_ROOT,
     RESULT_ROOT,
+    add_image_set_args,
     as_float,
+    detail_rows_for_image_set,
     details_path,
     discover_runs,
     ensure_output_dirs,
     read_csv,
     run_config,
+    selected_image_set,
     write_csv,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iteration", type=int, default=10000)
+    add_image_set_args(parser)
     parser.add_argument("--top-runs", type=int, default=5)
     return parser.parse_args()
 
@@ -96,13 +99,13 @@ def dataset_split(config: dict) -> Path:
     return split
 
 
-def load_run_rows(run_name: str, iteration: int) -> list[dict[str, str]]:
+def load_run_rows(run_name: str, args: argparse.Namespace) -> list[dict[str, str]]:
     rows = read_csv(details_path(EXP_ROOT / run_name))
-    return [row for row in rows if int(float(row.get("iteration", -1))) == iteration]
+    return detail_rows_for_image_set(rows, args)
 
 
-def components(run_name: str, iteration: int, index: int, low_path: Path, high_path: Path) -> list[np.ndarray]:
-    image_dir = EXP_ROOT / run_name / "img" / str(iteration)
+def components(run_name: str, image_set: str, index: int, low_path: Path, high_path: Path) -> list[np.ndarray]:
+    image_dir = EXP_ROOT / run_name / "img" / image_set
     r_low = read_bgr(image_dir / f"{index}_R_low.png")
     r_high = read_bgr(image_dir / f"{index}_R_high.png")
     l_low = read_bgr(image_dir / f"{index}_L_low.png", gray=True)
@@ -139,15 +142,16 @@ def choose_cases(best_rows: list[dict[str, str]]) -> list[dict[str, object]]:
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
+    image_set = selected_image_set(args)
     ranking_path = RESULT_ROOT / "corrected_ranking.csv"
     if not ranking_path.is_file():
         raise SystemExit("Missing corrected_ranking.csv. Run 02_summarize_rank.py first.")
     ranking = read_csv(ranking_path)
     top_run_names = [row["run"] for row in ranking[: args.top_runs]]
     best_run = top_run_names[0]
-    best_rows = load_run_rows(best_run, args.iteration)
+    best_rows = load_run_rows(best_run, args)
     if not best_rows:
-        raise SystemExit(f"No details rows for best run {best_run} at iteration {args.iteration}")
+        raise SystemExit(f"No details rows for best run {best_run} at image set {image_set}")
     cases = choose_cases(best_rows)
 
     first_config = run_config(EXP_ROOT / best_run)
@@ -163,9 +167,9 @@ def main() -> int:
         images = []
         row_labels = []
         for run_name in top_run_names:
-            run_rows = {int(float(item["image_index"])): item for item in load_run_rows(run_name, args.iteration)}
+            run_rows = {int(float(item["image_index"])): item for item in load_run_rows(run_name, args)}
             metrics = run_rows.get(index, {})
-            images.append(components(run_name, args.iteration, index, low_path, high_path))
+            images.append(components(run_name, image_set, index, low_path, high_path))
             row_labels.append(
                 f"{run_name[:22]}\n"
                 f"R→H {as_float(metrics, 'r_low_highref_psnr'):.1f}dB; "
