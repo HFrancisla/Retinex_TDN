@@ -17,6 +17,7 @@ from paired_steps_common import (
     details_path,
     discover_runs,
     ensure_output_dirs,
+    read_csv,
     relative,
     report_path,
     selected_image_set,
@@ -45,12 +46,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def details_have_required_columns(path) -> bool:
+def has_required_schema(path, image_set: str) -> bool:
     if not path.is_file():
         return False
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        header = handle.readline().strip().split(",")
-    return REQUIRED_DETAIL_COLUMNS.issubset(set(header))
+    try:
+        rows = read_csv(path)
+    except Exception:
+        return False
+    if not rows:
+        return False
+    if not REQUIRED_DETAIL_COLUMNS.issubset(set(rows[0].keys())):
+        return False
+    if "image_set" in rows[0]:
+        return any(row.get("image_set") == image_set for row in rows)
+    return image_set.isdigit()
 
 
 def main() -> int:
@@ -82,7 +91,7 @@ def main() -> int:
             )
             print(f"[skip incomplete] {relative(run_dir)}")
             continue
-        force_this_run = args.force or not details_have_required_columns(details_path(run_dir))
+        force_this_run = args.force or not has_required_schema(details_path(run_dir), image_set)
         command = [
             args.python,
             str(COMPARE_ANALYZER),

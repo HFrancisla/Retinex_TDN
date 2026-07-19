@@ -1328,6 +1328,14 @@ def main(args):
             )
         print(f'[final full validation] report: {final_report_path}')
 
+        stale_best_image_dir = os.path.join(file_img_path, 'best')
+        if os.path.isdir(stale_best_image_dir):
+            shutil.rmtree(stale_best_image_dir)
+            print(f'[cleanup] Removed quick best images: {stale_best_image_dir}')
+        if os.path.isfile(best_save_path):
+            os.remove(best_save_path)
+            print(f'[cleanup] Removed quick best checkpoint: {best_save_path}')
+
     print()
     tb_writer.close()
     validation_label = 'quick-val' if quick_val_enabled else 'validation'

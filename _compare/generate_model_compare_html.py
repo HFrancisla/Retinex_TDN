@@ -752,7 +752,9 @@ function render() {{
         let sepCls = '';
         if (col.isFirstInMode && ci > 0) sepCls = ' sep-mode';
         else if (col.isFirstInLoss && ci > 0 && !col.isFirstInMode) sepCls = ' sep-loss';
-        hdr2 += `<th class="loss-hdr${{sepCls}}" colspan="${{runWidth(col)}}" title="${{col.loss.loss}}"><span class="loss-label">${{col.loss.loss_short}}</span><br><span class="psnr">S-low ${{col.run.psnr}}dB</span></th>`;
+        const dateMatch = (col.run.run_name || "").match(/_(\\d{{8}})(?:-\\d{{6}})?$/);
+        const dateStr = dateMatch ? ` <span style="color:#c678dd; font-size:10px;">${{dateMatch[1]}}</span>` : '';
+        hdr2 += `<th class="loss-hdr${{sepCls}}" colspan="${{runWidth(col)}}" title="${{col.loss.loss}}"><span class="loss-label">${{col.loss.loss_short}}</span>${{dateStr}}<br><span class="psnr">S-low ${{col.run.psnr}}dB</span></th>`;
     }}
     hdr2 += '</tr>';
 
