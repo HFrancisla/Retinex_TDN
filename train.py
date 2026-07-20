@@ -999,6 +999,9 @@ def main(args):
         )
         return metadata
 
+    print(f"\n[Time Info] Training starts at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    training_start_time = time.time()
+
     while global_iter < max_iterations:
         # 获取下一个 batch，epoch 结束时重新 shuffle
         try:
@@ -1338,6 +1341,13 @@ def main(args):
 
     print()
     tb_writer.close()
+
+    training_end_time = time.time()
+    elapsed_seconds = training_end_time - training_start_time
+    elapsed_str = str(datetime.timedelta(seconds=int(elapsed_seconds)))
+    print(f"\n[Time Info] Training ends at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"[Time Info] Total training time elapsed: {elapsed_str}")
+
     validation_label = 'quick-val' if quick_val_enabled else 'validation'
     print(
         f"\nTraining completed. Best {validation_label} {selection_metric} "
