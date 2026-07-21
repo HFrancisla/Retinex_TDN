@@ -531,20 +531,18 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                                  f"{image_index}_L_high")
                     save_count += 1
 
-            # paired loss 专用：比较同一场景的 R_low vs R_high（反射分量应一致）。
+            # paired loss 专用：记录 R_low vs R_high 之间的反射分量一致性。
             if isinstance(loss_function, PairedLoss) and R_high is not None:
                 for batch_index in range(I_low.shape[0]):
                     r_low = R_low[batch_index:batch_index + 1].clamp(0, 1)
                     r_high = R_high[batch_index:batch_index + 1].clamp(0, 1)
 
-                    psnr_val = calculate_psnr(
+                    consistency_psnr = calculate_psnr(
                         r_low,
                         r_high,
                     )
-                    accu_psnr += psnr_val
-                    psnr_count += 1
                     metric_sums['r_consistency_psnr'] = (
-                        metric_sums.get('r_consistency_psnr', 0.0) + psnr_val
+                        metric_sums.get('r_consistency_psnr', 0.0) + consistency_psnr
                     )
 
             # 配对数据集可用的实用参考指标。pure-low 训练也可以只在验证阶段携带
@@ -553,9 +551,13 @@ def evaluate(model, data_loader, device, lr, filefold_path,
                 for batch_index in range(I_low.shape[0]):
                     r_low = R_low[batch_index:batch_index + 1].clamp(0, 1)
                     high_ref = I_high[batch_index:batch_index + 1].clamp(0, 1)
+                    psnr_val = calculate_psnr(r_low, high_ref)
+                    accu_psnr += psnr_val
+                    psnr_count += 1
+
                     metric_sums['r_low_highref_psnr'] = (
                         metric_sums.get('r_low_highref_psnr', 0.0)
-                        + calculate_psnr(r_low, high_ref)
+                        + psnr_val
                     )
                     metric_sums['r_low_highref_l1'] = (
                         metric_sums.get('r_low_highref_l1', 0.0)

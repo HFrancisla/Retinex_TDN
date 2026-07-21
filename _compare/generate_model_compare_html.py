@@ -497,10 +497,10 @@ th.loss-hdr {{ font-size:11px; max-width:140px; overflow:hidden; text-overflow:e
 th.loss-hdr .loss-label {{ color:#f0c060; }}
 th.loss-hdr .psnr {{ color:#888; font-size:10px; }}
 th.sep-mode {{ border-left:3px solid #e94560; }}
-th.sep-loss {{ border-left:2px solid #7a7a5a; }}
+th.sep-loss {{ border-left:3px solid #e94560; }}
 td {{ padding:2px; text-align:center; }}
 td.sep-mode {{ border-left:3px solid #e94560; }}
-td.sep-loss {{ border-left:2px solid #7a7a5a; }}
+td.sep-loss {{ border-left:3px solid #e94560; }}
 td img {{ display:block; width:180px; height:auto; border-radius:3px; cursor:pointer; transition:transform .15s; }}
 td img:hover {{ transform:scale(2.5); z-index:20; position:relative; box-shadow:0 0 20px #000; }}
 
@@ -558,6 +558,9 @@ table.has-high-ref th.reference {{ border-right:3px solid #e94560; }}
     <button onclick="nextImg()">▶</button>
     <label style="margin-left:12px">跳转:</label>
     <input type="range" id="imgSlider" min="0" value="0" style="width:200px">
+    <label style="margin-left:12px; cursor:pointer;">
+      <input type="checkbox" id="sortByDateToggle" checked onchange="render()"> 按日期最新排序 (V2)
+    </label>
   </div>
 </header>
 
@@ -683,12 +686,50 @@ document.getElementById('imgSlider').oninput = function() {{
 // 展平当前 iter 下有图的 (mode, loss, run) 三元组，同时记录分隔类型
 function collectColumns(info) {{
     const cols = [];  // {{ mode, loss, run, isFirstInMode, isFirstInLoss }}
+    const sortByDate = document.getElementById('sortByDateToggle') ? document.getElementById('sortByDateToggle').checked : true;
     for (let mi = 0; mi < info.modes.length; mi++) {{
         const mode = info.modes[mi];
         let modeHasContent = false;
-        for (const loss of mode.losses) {{
+        let losses = [...mode.losses];
+        if (sortByDate) {{
+            losses.sort((a, b) => {{
+                const getScore = (ls) => {{
+                    let maxStr = "00000000000000";
+                    for (const r of ls.runs) {{
+                        const exp = r.exp || r.run_name || "";
+                        const m = exp.match(/_(\\d{{8}})(?:-(\\d{{6}}))?$/);
+                        if (m) {{
+                            const str = m[1] + (m[2] || "000000");
+                            if (str > maxStr) maxStr = str;
+                        }}
+                    }}
+                    return maxStr;
+                }};
+                const scoreA = getScore(a);
+                const scoreB = getScore(b);
+                if (scoreA > scoreB) return -1;
+                if (scoreA < scoreB) return 1;
+                return 0;
+            }});
+        }}
+        for (const loss of losses) {{
             let lossFirst = true;
-            for (const r of loss.runs) {{
+            let runs = [...loss.runs];
+            if (sortByDate) {{
+                runs.sort((a, b) => {{
+                    const getScore = (r) => {{
+                        const exp = r.exp || r.run_name || "";
+                        const m = exp.match(/_(\\d{{8}})(?:-(\\d{{6}}))?$/);
+                        return m ? m[1] + (m[2] || "000000") : "00000000000000";
+                    }};
+                    const sA = getScore(a);
+                    const sB = getScore(b);
+                    if (sA > sB) return -1;
+                    if (sA < sB) return 1;
+                    return 0;
+                }});
+            }}
+            for (const r of runs) {{
                 if (r.img_indices[currentIter] !== undefined) {{
                     cols.push({{
                         mode: mode,
@@ -752,8 +793,10 @@ function render() {{
         let sepCls = '';
         if (col.isFirstInMode && ci > 0) sepCls = ' sep-mode';
         else if (col.isFirstInLoss && ci > 0 && !col.isFirstInMode) sepCls = ' sep-loss';
-        const dateMatch = (col.run.run_name || "").match(/_(\\d{{8}})(?:-\\d{{6}})?$/);
-        const dateStr = dateMatch ? ` <span style="color:#c678dd; font-size:10px;">${{dateMatch[1]}}</span>` : '';
+        const dateMatch = (col.run.run_name || "").match(/_(\\d{{8}})(?:-(\\d{{6}}))?$/);
+        let dateText = dateMatch ? dateMatch[1] : '';
+        if (dateMatch && dateMatch[2]) dateText += '-' + dateMatch[2].substring(0,2);
+        const dateStr = dateText ? ` <span style="color:#c678dd; font-size:10px;">${{dateText}}</span>` : '';
         hdr2 += `<th class="loss-hdr${{sepCls}}" colspan="${{runWidth(col)}}" title="${{col.loss.loss}}"><span class="loss-label">${{col.loss.loss_short}}</span>${{dateStr}}<br><span class="psnr">S-low ${{col.run.psnr}}dB</span></th>`;
     }}
     hdr2 += '</tr>';
