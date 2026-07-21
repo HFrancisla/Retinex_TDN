@@ -550,6 +550,13 @@ table.has-high-ref th.reference {{ border-right:3px solid #e94560; }}
     <label style="margin-left:12px; cursor:pointer;">
       <input type="checkbox" id="sortByDateToggle" checked onchange="render()"> 按日期最新排序 (V2)
     </label>
+    <label style="margin-left:12px">SM版本:</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="smv1Toggle" checked onchange="render()"> v1</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="smv2Toggle" onchange="render()"> v2</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="smv3Toggle" onchange="render()"> v3</label>
+    <label style="margin-left:12px">Anchor版本:</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="anchorv1Toggle" checked onchange="render()"> v1</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="anchorv2Toggle" checked onchange="render()"> v2</label>
   </div>
 </header>
 
@@ -709,6 +716,22 @@ function collectColumns(info) {{
                 }});
             }}
             for (const ls of losses) {{
+                let keepLoss = true;
+                let smMatch = ls.loss.match(/(?:^|_)(?:[\\d\\.]+)sm(v\\d+)?(?:_|$)/);
+                if (smMatch) {{
+                    let v = smMatch[1] || 'v1';
+                    if (v === 'v1' && !(document.getElementById('smv1Toggle').checked)) keepLoss = false;
+                    if (v === 'v2' && !(document.getElementById('smv2Toggle').checked)) keepLoss = false;
+                    if (v === 'v3' && !(document.getElementById('smv3Toggle').checked)) keepLoss = false;
+                }}
+                let anchorMatch = ls.loss.match(/(?:^|_)(?:[\\d\\.]+)anchor(v\\d+)?(?:_|$)/);
+                if (anchorMatch) {{
+                    let v = anchorMatch[1] || 'v1';
+                    if (v === 'v1' && !(document.getElementById('anchorv1Toggle').checked)) keepLoss = false;
+                    if (v === 'v2' && !(document.getElementById('anchorv2Toggle').checked)) keepLoss = false;
+                }}
+                if (!keepLoss) continue;
+
                 let runs = [...ls.runs];
                 if (sortByDate) {{
                     runs.sort((a, b) => {{
