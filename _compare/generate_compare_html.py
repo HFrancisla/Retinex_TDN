@@ -557,6 +557,8 @@ table.has-high-ref th.reference {{ border-right:3px solid #e94560; }}
     <label style="margin-left:12px">Anchor版本:</label>
     <label style="cursor:pointer;"><input type="checkbox" id="anchorv1Toggle" checked onchange="render()"> v1</label>
     <label style="cursor:pointer;"><input type="checkbox" id="anchorv2Toggle" checked onchange="render()"> v2</label>
+    <label style="margin-left:12px">Mode:</label>
+    <span id="modeFilters"></span>
   </div>
 </header>
 
@@ -582,6 +584,27 @@ let currentIdx = 0;
 function init() {{
     const tabs = document.getElementById('tabs');
     const dsOrder = DATA._dataset_order || Object.keys(DATA).filter(k => k !== '_dataset_order').sort();
+
+    // 动态生成 Mode 过滤器
+    const allModes = new Set();
+    for (const ds of Object.keys(DATA)) {{
+        if (ds === '_dataset_order') continue;
+        const info = DATA[ds];
+        if (info.models) {{
+            for (const model of info.models) {{
+                for (const md of model.modes) allModes.add(md.mode);
+            }}
+        }}
+    }}
+    const modeContainer = document.getElementById('modeFilters');
+    Array.from(allModes).sort().forEach(mode => {{
+        const lbl = document.createElement('label');
+        lbl.style.cursor = 'pointer';
+        lbl.style.marginRight = '8px';
+        lbl.innerHTML = `<input type="checkbox" id="toggle_mode_${{mode}}" checked onchange="render()"> ${{mode}}`;
+        modeContainer.appendChild(lbl);
+    }});
+
     for (const ds of dsOrder) {{
         const d = document.createElement('div');
         d.className = 'tab';
@@ -692,6 +715,8 @@ function collectColumns(info) {{
         const model = info.models[mi];
         let modelFirst = true;
         for (const md of model.modes) {{
+            const modeCheckbox = document.getElementById('toggle_mode_' + md.mode);
+            if (modeCheckbox && !modeCheckbox.checked) continue;
             let modeFirst = true;
             let losses = [...md.losses];
             if (sortByDate) {{

@@ -1,6 +1,6 @@
 # Step 03 training dynamics
 
-Eval rows parsed: `480`
+Eval rows parsed: `600`
 
 A run is flagged when eval total loss decreases while the R consistency proxy drops by more than 10 dB.
 
@@ -8,9 +8,7 @@ A run is flagged when eval total loss decreases while the R consistency proxy dr
 
 - `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.05er_0.5smv1_20260720-121319`: total Δ=-0.0541, R proxy Δ=-16.94 dB
 - `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.15er_0.5smv1_20260720-135547`: total Δ=-0.0431, R proxy Δ=-36.13 dB
-- `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1er_0.1smv1_20260713-042929`: total Δ=-0.0337, R proxy Δ=-30.38 dB
 - `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1er_0.1smv2_20260712-163016`: total Δ=-0.0308, R proxy Δ=-28.19 dB
-- `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1er_0.3smv1_20260713-061113`: total Δ=-0.0320, R proxy Δ=-30.81 dB
 - `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1er_0.3smv2_20260712-213703`: total Δ=-0.0364, R proxy Δ=-25.52 dB
 - `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1er_0.5smv1_20260713-075255`: total Δ=-0.0476, R proxy Δ=-31.07 dB
 - `LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1er_0.5smv2_20260720-085219`: total Δ=-0.0336, R proxy Δ=-24.17 dB
