@@ -1,6 +1,6 @@
 # Step 04 training dynamics
 
-Eval rows parsed: `280`
+Eval rows parsed: `480`
 Full-validation summaries: `5`
 
 Use unweighted `full_recon_loss` when comparing runs with different `recon_weight`; weighted total loss is not directly comparable across recon weights.

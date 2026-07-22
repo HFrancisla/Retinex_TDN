@@ -73,12 +73,3 @@ bash _compare/run_all.sh
 .venv/bin/python _analysis/RetinexPixelTrans/paired/steps/99_run_all_paired_steps.py
 .venv/bin/python _analysis/RetinexPixelTrans/pure_low_single/steps/99_run_all_pure_low_single_steps.py
 ```
-
-主要输出：
-
-- `experiments/*/synthesis/`
-- `experiments/*/synthesis_compare.txt`
-- `experiments/*/decomposition_analysis.txt`
-- `experiments/*/decomposition_analysis_details.csv`
-- `_compare/html/compare*.html`
-- `_analysis/**/steps/results/`

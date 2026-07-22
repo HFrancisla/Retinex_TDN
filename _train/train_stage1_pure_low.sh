@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# train_lolv2_pure_single.sh — LOLv2 pure_low_single anchor：4 网络 × v1/v2，共 8 次
+# train_stage1_pure_low.sh — 训练 15 个纯低光分解（Stage1）的配置
 #
-# 对比 anchor v1（L ≈ max(I)）与 anchor v2（mean(L) ≈ mean(I)）在
-# pure_low_single 模式下对 4 个网络的影响。
+# 在将 selection_metric 修改为 total_loss 并清理旧实验后，重新批量运行这 15 个消融实验。
 #
 # 用法:
-#   bash _train/train_lolv2_pure_single.sh                # 直接训练（默认）
-#   bash _train/train_lolv2_pure_single.sh --validate     # 仅预检: 配置验证 + 冒烟测试
+#   bash _train/train_stage1_pure_low.sh                # 直接训练（默认）
+#   bash _train/train_stage1_pure_low.sh --validate     # 仅预检: 配置验证 + 冒烟测试
 # =============================================================================
 
 set -euo pipefail
@@ -19,8 +18,8 @@ SMOKE_SCRIPT="${ROOT_DIR}/_train/smoke_test.py"
 
 LOG_DIR="${ROOT_DIR}/_tmp"
 mkdir -p "${LOG_DIR}"
-FAILED_LOG="${LOG_DIR}/train_lolv2_pure_single_failed.log"
-SUMMARY_LOG="${LOG_DIR}/train_lolv2_pure_single_summary.log"
+FAILED_LOG="${LOG_DIR}/train_stage1_pure_low_failed.log"
+SUMMARY_LOG="${LOG_DIR}/train_stage1_pure_low_summary.log"
 
 MODE="${1:-run}"
 if [[ "$MODE" == "--validate" ]]; then
@@ -29,7 +28,7 @@ else
     SKIP_CHECK=true;   VALIDATE_ONLY=false
 fi
 
-TOTAL=8
+TOTAL=15
 CURRENT=0
 TRAIN_FAILED=0
 
@@ -48,12 +47,12 @@ preflight_check() {
 
     echo ""
     echo "  ╔══════════════════════════════════════════════════════════════════════╗"
-    echo "  ║       预检验证 — LOLv2 pure_low_single anchor (8 配置)               ║"
+    echo "  ║       预检验证 — Stage1 pure_low_single (15 配置)                   ║"
     echo "  ╚══════════════════════════════════════════════════════════════════════╝"
     echo ""
 
     # ---- 阶段 1：配置 + 数据路径 ----
-    echo -e "${CYAN}  ▸ 阶段 1/2：验证 8 个配置文件与数据路径${NC}"
+    echo -e "${CYAN}  ▸ 阶段 1/2：验证 15 个配置文件与数据路径${NC}"
     hr
 
     "${PYTHON}" -c "
@@ -61,14 +60,21 @@ from utils import load_config
 import os, sys
 
 configs = [
-    ('RetinexPointRaw       | pure_low_single v1  | LOLv2', 'configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp.yaml'),
-    ('RetinexPointRaw       | pure_low_single v2  | LOLv2', 'configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml'),
-    ('RetinexPixelClassic    | pure_low_single v1  | LOLv2', 'configs/RetinexPixelClassic/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml'),
-    ('RetinexPixelClassic    | pure_low_single v2  | LOLv2', 'configs/RetinexPixelClassic/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml'),
-    ('RetinexPixelTrans      | pure_low_single v1  | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml'),
-    ('RetinexPixelTrans      | pure_low_single v2  | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml'),
-    ('RetinexPixelTransMinus | pure_low_single v1  | LOLv2', 'configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml'),
-    ('RetinexPixelTransMinus | pure_low_single v2  | LOLv2', 'configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml'),
+    ('Trans | 0.3r a2 b0.05 sm0.1v1', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
+    ('Trans | 1.0r a1 b0.05 sm0v1', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml'),
+    ('Trans | 1.0r a2 b0.05 sm0v1', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml'),
+    ('Trans | 1.0r a2 b0.05 sm0.1v1', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
+    ('Trans | 0.7r a2 b0.08 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_0.7r_0.10anchorv2_0.08bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.05) b0.08 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.05anchorv2_0.08bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.05) b0.10 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.05anchorv2_0.10bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.08) b0.05 sm0.05v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.05smv2.yaml'),
+    ('Trans | 1.0r a2(0.08) b0.05 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.08) b0.05 sm0.2v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.2smv2.yaml'),
+    ('Trans | 1.0r a2(0.08) b0.08 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.08bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.10) b0.05 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.05bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.10) b0.10 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.10bdsp_0.1smv2.yaml'),
+    ('Trans | stage2 1.0r a2 b0.05 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv2.yaml'),
+    ('Trans | stage2 1.0r a2 b0.05 sm0.1v3', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv3.yaml')
 ]
 
 ok = 0
@@ -95,7 +101,7 @@ if ok != len(configs):
 
     # ---- 阶段 2：冒烟测试 ----
     echo ""
-    echo -e "${CYAN}  ▸ 阶段 2/2：冒烟测试 — 每类别跑 5 个 training step${NC}"
+    echo -e "${CYAN}  ▸ 阶段 2/2：冒烟测试 — 挑选部分跑 5 个 training step${NC}"
     echo "     (验证模型/损失/数据三者能正确对接)"
     hr
 
@@ -105,7 +111,7 @@ if ok != len(configs):
     if [[ $failed -ne 0 ]]; then
         return 1
     fi
-    echo -e "  ${GREEN}预检全部通过 ✅  可以开始 LOLv2 pure_low_single anchor 训练${NC}"
+    echo -e "  ${GREEN}预检全部通过 ✅  可以开始 Stage1 pure_low_single 训练${NC}"
     echo ""
 }
 
@@ -149,43 +155,56 @@ if [[ "$VALIDATE_ONLY" == true ]]; then
 fi
 
 # =============================================================================
-#  LOLv2 pure_low_single anchor — 4 网络 × v1/v2 = 8 次
+#  Stage1 15 次训练
 # =============================================================================
 echo ""
 echo "  ████████████████████████████████████████████████████████████████████████"
-echo "  █  LOLv2 pure_low_single anchor v1 vs v2：4 网络 × 2 = 8 次训练"
+echo "  █  Stage1 pure_low_single： 15 次全量消融实验训练"
 echo "  ████████████████████████████████████████████████████████████████████████"
 
-# ---- RetinexPointRaw ----
-run_exp "RetinexPointRaw | LOLv2 pure_low_single anchor v1" \
-    "configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp.yaml"
-run_exp "RetinexPointRaw | LOLv2 pure_low_single anchor v2" \
-    "configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml"
+run_exp "Stage1 | 0.3r a2 b0.05 sm0.1v1" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
+run_exp "Stage1 | 1.0r a1 b0.05 sm0v1" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml"
+run_exp "Stage1 | 1.0r a2 b0.05 sm0v1" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"
+run_exp "Stage1 | 1.0r a2 b0.05 sm0.1v1" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
 
-# ---- RetinexPixelClassic ----
-run_exp "RetinexPixelClassic | LOLv2 pure_low_single anchor v1" \
-    "configs/RetinexPixelClassic/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml"
-run_exp "RetinexPixelClassic | LOLv2 pure_low_single anchor v2" \
-    "configs/RetinexPixelClassic/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"
+run_exp "Stage1 | 0.7r a2 b0.08 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_0.7r_0.10anchorv2_0.08bdsp_0.1smv2.yaml"
 
-# ---- RetinexPixelTrans ----
-run_exp "RetinexPixelTrans | LOLv2 pure_low_single anchor v1" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml"
-run_exp "RetinexPixelTrans | LOLv2 pure_low_single anchor v2" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"
+run_exp "Stage1 | 1.0r a2(0.05) b0.08 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.05anchorv2_0.08bdsp_0.1smv2.yaml"
+run_exp "Stage1 | 1.0r a2(0.05) b0.10 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.05anchorv2_0.10bdsp_0.1smv2.yaml"
 
-# ---- RetinexPixelTransMinus ----
-run_exp "RetinexPixelTransMinus | LOLv2 pure_low_single anchor v1" \
-    "configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv1_0.05bdsp_0.0smv1.yaml"
-run_exp "RetinexPixelTransMinus | LOLv2 pure_low_single anchor v2" \
-    "configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"
+run_exp "Stage1 | 1.0r a2(0.08) b0.05 sm0.05v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.05smv2.yaml"
+run_exp "Stage1 | 1.0r a2(0.08) b0.05 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.1smv2.yaml"
+run_exp "Stage1 | 1.0r a2(0.08) b0.05 sm0.2v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.2smv2.yaml"
+
+run_exp "Stage1 | 1.0r a2(0.08) b0.08 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.08bdsp_0.1smv2.yaml"
+
+run_exp "Stage1 | 1.0r a2(0.10) b0.05 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.05bdsp_0.1smv2.yaml"
+run_exp "Stage1 | 1.0r a2(0.10) b0.10 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.10bdsp_0.1smv2.yaml"
+
+run_exp "Stage1 | stage2 1.0r a2 b0.05 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv2.yaml"
+run_exp "Stage1 | stage2 1.0r a2 b0.05 sm0.1v3" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv3.yaml"
 
 # =============================================================================
 #  汇总
 # =============================================================================
 echo ""
 echo "  ╔══════════════════════════════════════════════════════════════════════╗"
-echo "  ║           LOLv2 pure_low_single anchor 训练全部完成                  ║"
+echo "  ║           Stage1 pure_low_single 训练全部完成                       ║"
 echo "  ╠══════════════════════════════════════════════════════════════════════╣"
 printf "  ║  总计: %-4s  通过: %-4s  失败: %-4s                              ║\n" \
     "${TOTAL}" "$((TOTAL - TRAIN_FAILED))" "${TRAIN_FAILED}"

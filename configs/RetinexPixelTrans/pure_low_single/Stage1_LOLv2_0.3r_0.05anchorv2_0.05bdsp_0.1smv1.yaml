@@ -9,7 +9,7 @@
 #   D: recon=0.3  smooth=0.5  → 两项联合调整（推荐优先跑）
 # ============================================================
 experiment:
-  name: "LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1"
+  name: "Stage1_LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1"
   auto_name: true
 
 data:
@@ -40,7 +40,7 @@ training:
     save_img_interval: 0
     save_best_ckpt: true
     save_best_images: true
-    selection_metric: "r_low_highref_psnr"
+    selection_metric: "total_loss"
     selection_mode: "max"
     keep_top_ckpt: 3
     max_save_images: 100

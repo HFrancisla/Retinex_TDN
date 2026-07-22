@@ -1,5 +1,5 @@
 experiment:
-  name: "LOLv2_next_1.0r_0.08anchorv2_0.05bdsp_0.05smv2"
+  name: "Stage1_LOLv2_next_0.7r_0.10anchorv2_0.08bdsp_0.1smv2"
   auto_name: true
 
 data:
@@ -30,7 +30,7 @@ training:
     save_img_interval: 0
     save_best_ckpt: true
     save_best_images: true
-    selection_metric: "r_low_highref_psnr"
+    selection_metric: "total_loss"
     selection_mode: "max"
     keep_top_ckpt: 3
     max_save_images: 100
@@ -38,11 +38,11 @@ training:
 
 loss:
   mode: "pure_low_single_pixel"
-  recon_weight: 1.0
-  anchor_weight: 0.08
+  recon_weight: 0.7
+  anchor_weight: 0.10
   anchor_version: "v2"
-  bdsp_weight: 0.05
-  smooth_weight: 0.05
+  bdsp_weight: 0.08
+  smooth_weight: 0.1
   smooth_version: "v2"
 
 resume:

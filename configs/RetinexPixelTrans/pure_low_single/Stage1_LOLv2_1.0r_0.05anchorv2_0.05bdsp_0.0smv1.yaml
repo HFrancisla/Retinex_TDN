@@ -1,6 +1,6 @@
-# RetinexPixelClassic — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
+# RetinexPixelTrans — LOLv2 pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1"
+  name: "Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1"
   auto_name: true
 
 data:
@@ -12,9 +12,10 @@ data:
   num_workers: 4
 
 model:
-  name: "RetinexPixelClassic"
+  name: "RetinexPixelTrans"
   dim: 24
-  l_channel: 32
+  l_heads: 1
+  l_ffn_expansion: 2.66
   use_dp: false
   gpu_id: "0"
 
@@ -30,7 +31,7 @@ training:
     save_img_interval: 0
     save_best_ckpt: true
     save_best_images: true
-    selection_metric: "r_low_highref_psnr"
+    selection_metric: "total_loss"
     selection_mode: "max"
     keep_top_ckpt: 3
     max_save_images: 100

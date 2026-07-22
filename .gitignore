@@ -13,3 +13,4 @@ _analysis/**/*.jpeg
 _analysis/**/*.pdf
 _analysis/**/*.svg
 *.log
+_thesis/
