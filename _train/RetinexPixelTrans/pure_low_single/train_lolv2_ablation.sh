@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
 # =============================================================================
-# train_lolv2_paired.sh — LOLv2 paired：4 个网络，共 6 次
+# train_lolv2_ablation.sh — LOLv2 PixelTrans 消融 A–D，共 4 次
 #
-# 使用 .venv 中的 Python 环境，依次执行 6 组 paired 训练。
-# RetinexPixelTrans 包含 3 个 smooth_weight 变体（0.1 / 0.3 / 0.5）。
+# 对 RetinexPixelTrans 在 LOLv2 pure_low_single 模式下做消融实验，
+# 变化 recon_weight 与 smooth_weight 两个超参：
+#   A (基线)     : recon=1.0  smooth=0.1
+#   B (强平滑)   : recon=1.0  smooth=0.5
+#   C (弱重建)   : recon=0.3  smooth=0.1
+#   D (推荐优先) : recon=0.3  smooth=0.5
 #
 # 用法:
-#   bash _train/train_lolv2_paired.sh                # 直接训练（默认）
-#   bash _train/train_lolv2_paired.sh --validate     # 仅预检: 配置验证 + 冒烟测试
+#   bash _train/train_lolv2_ablation.sh                # 直接训练（默认）
+#   bash _train/train_lolv2_ablation.sh --validate     # 仅预检: 配置验证 + 冒烟测试
 # =============================================================================
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 PYTHON="${ROOT_DIR}/.venv/bin/python"
 TRAIN_SCRIPT="${ROOT_DIR}/train.py"
 SMOKE_SCRIPT="${ROOT_DIR}/_train/smoke_test.py"
 
 LOG_DIR="${ROOT_DIR}/_tmp"
 mkdir -p "${LOG_DIR}"
-FAILED_LOG="${LOG_DIR}/train_lolv2_paired_failed.log"
-SUMMARY_LOG="${LOG_DIR}/train_lolv2_paired_summary.log"
+FAILED_LOG="${LOG_DIR}/train_lolv2_ablation_failed.log"
+SUMMARY_LOG="${LOG_DIR}/train_lolv2_ablation_summary.log"
 
 MODE="${1:-run}"
 if [[ "$MODE" == "--validate" ]]; then
@@ -29,7 +33,7 @@ else
     SKIP_CHECK=true;   VALIDATE_ONLY=false
 fi
 
-TOTAL=6
+TOTAL=4
 CURRENT=0
 TRAIN_FAILED=0
 
@@ -48,12 +52,12 @@ preflight_check() {
 
     echo ""
     echo "  ╔══════════════════════════════════════════════════════════════════════╗"
-    echo "  ║          预检验证 — LOLv2 paired (6 配置)                            ║"
+    echo "  ║        预检验证 — LOLv2 PixelTrans 消融 A–D (4 配置)                ║"
     echo "  ╚══════════════════════════════════════════════════════════════════════╝"
     echo ""
 
     # ---- 阶段 1：配置 + 数据路径 ----
-    echo -e "${CYAN}  ▸ 阶段 1/2：验证 6 个配置文件与数据路径${NC}"
+    echo -e "${CYAN}  ▸ 阶段 1/2：验证 4 个配置文件与数据路径${NC}"
     hr
 
     "${PYTHON}" -c "
@@ -61,12 +65,10 @@ from utils import load_config
 import os, sys
 
 configs = [
-    ('RetinexPointRaw       | paired              | LOLv2', 'configs/RetinexPointRaw/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq.yaml'),
-    ('RetinexPixelClassic    | paired              | LOLv2', 'configs/RetinexPixelClassic/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml'),
-    ('RetinexPixelTrans      | paired sm=0.1       | LOLv2', 'configs/RetinexPixelTrans/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml'),
-    ('RetinexPixelTrans      | paired sm=0.3       | LOLv2', 'configs/RetinexPixelTrans/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.3smv1.yaml'),
-    ('RetinexPixelTrans      | paired sm=0.5       | LOLv2', 'configs/RetinexPixelTrans/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.5smv1.yaml'),
-    ('RetinexPixelTransMinus | paired              | LOLv2', 'configs/RetinexPixelTransMinus/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml'),
+    ('RetinexPixelTrans | ablation A (r=1.0 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
+    ('RetinexPixelTrans | ablation B (r=1.0 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml'),
+    ('RetinexPixelTrans | ablation C (r=0.3 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
+    ('RetinexPixelTrans | ablation D (r=0.3 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml'),
 ]
 
 ok = 0
@@ -97,14 +99,13 @@ if ok != len(configs):
     echo "     (验证模型/损失/数据三者能正确对接)"
     hr
 
-    "${PYTHON}" "${SMOKE_SCRIPT}" --subset lolv2_paired || { failed=1; }
+    "${PYTHON}" "${SMOKE_SCRIPT}" --subset lolv2_ablation || { failed=1; }
 
     hr
     if [[ $failed -ne 0 ]]; then
-        echo -e "  ${RED}冒烟测试失败，终止。使用 --skip-check 可跳过预检强制训练。${NC}"
         return 1
     fi
-    echo -e "  ${GREEN}预检全部通过 ✅  可以开始 LOLv2 paired 训练${NC}"
+    echo -e "  ${GREEN}预检全部通过 ✅  可以开始 LOLv2 PixelTrans 消融训练${NC}"
     echo ""
 }
 
@@ -148,37 +149,29 @@ if [[ "$VALIDATE_ONLY" == true ]]; then
 fi
 
 # =============================================================================
-#  LOLv2 paired — 4 网络 × 1 + RetinexPixelTrans × 2 (sm 变体) = 6 次
+#  LOLv2 RetinexPixelTrans 消融 A–D — 4 次
 # =============================================================================
 echo ""
 echo "  ████████████████████████████████████████████████████████████████████████"
-echo "  █  LOLv2 paired：4 个网络 + 2 个 smooth 变体，共 6 次训练"
+echo "  █  LOLv2 RetinexPixelTrans 消融 A–D：4 次训练"
+echo "  █  recon_weight ∈ {1.0, 0.3}  ✕  smooth_weight ∈ {0.1, 0.5}"
 echo "  ████████████████████████████████████████████████████████████████████████"
 
-run_exp "RetinexPointRaw | LOLv2 paired" \
-    "configs/RetinexPointRaw/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq.yaml"
-
-run_exp "RetinexPixelClassic | LOLv2 paired" \
-    "configs/RetinexPixelClassic/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml"
-
-run_exp "RetinexPixelTrans sm=0.1 | LOLv2 paired" \
-    "configs/RetinexPixelTrans/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml"
-
-run_exp "RetinexPixelTrans sm=0.3 | LOLv2 paired" \
-    "configs/RetinexPixelTrans/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.3smv1.yaml"
-
-run_exp "RetinexPixelTrans sm=0.5 | LOLv2 paired" \
-    "configs/RetinexPixelTrans/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.5smv1.yaml"
-
-run_exp "RetinexPixelTransMinus | LOLv2 paired" \
-    "configs/RetinexPixelTransMinus/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml"
+run_exp "消融 A (基线)     | LOLv2 recon=1.0 smooth=0.1" \
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
+run_exp "消融 B (强平滑)   | LOLv2 recon=1.0 smooth=0.5" \
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml"
+run_exp "消融 C (弱重建)   | LOLv2 recon=0.3 smooth=0.1" \
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
+run_exp "消融 D (推荐优先) | LOLv2 recon=0.3 smooth=0.5" \
+    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml"
 
 # =============================================================================
 #  汇总
 # =============================================================================
 echo ""
 echo "  ╔══════════════════════════════════════════════════════════════════════╗"
-echo "  ║              LOLv2 paired 训练全部完成                               ║"
+echo "  ║           LOLv2 PixelTrans 消融训练全部完成                          ║"
 echo "  ╠══════════════════════════════════════════════════════════════════════╣"
 printf "  ║  总计: %-4s  通过: %-4s  失败: %-4s                              ║\n" \
     "${TOTAL}" "$((TOTAL - TRAIN_FAILED))" "${TRAIN_FAILED}"
