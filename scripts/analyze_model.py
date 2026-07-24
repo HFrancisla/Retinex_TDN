@@ -35,8 +35,8 @@ def main():
     data_transform = transforms.ToTensor()
 
     # 路径配置
-    root_low = "datasets/LOLv2/Test/low"
-    root_high = "datasets/LOLv2/Test/high"
+    root_low = "/home/ipr4090/2024_hzf/Datasets/LOLv2/Test/low"
+    root_high = "/home/ipr4090/2024_hzf/Datasets/LOLv2/Test/high"
     assert os.path.exists(root_low), f"low路径不存在: {root_low}"
     assert os.path.exists(root_high), f"high路径不存在: {root_high}"
 

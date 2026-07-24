@@ -21,8 +21,8 @@ def main():
 
     data_transform = transforms.Compose([transforms.ToTensor()])
 
-    root = "datasets/LOLv2/Test/low"
-    root_high = "datasets/LOLv2/Test/high"
+    root = "/home/ipr4090/2024_hzf/Datasets/LOLv2/Test/low"
+    root_high = "/home/ipr4090/2024_hzf/Datasets/LOLv2/Test/high"
     assert os.path.exists(root), "file: '{}' dose not exist.".format(root)
     assert os.path.exists(root_high), "file: '{}' dose not exist.".format(root_high)
 

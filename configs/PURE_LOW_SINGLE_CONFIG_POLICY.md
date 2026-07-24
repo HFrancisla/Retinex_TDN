@@ -12,7 +12,7 @@ metric for checkpoint selection:
 
 ```yaml
 training:
-  save_ckpt_interval: 500
+  save_ckpt_interval: 0
   eval:
     eval_interval: 500
     save_img_interval: 0
@@ -20,7 +20,7 @@ training:
     save_best_images: true
     selection_metric: "r_low_highref_psnr"
     selection_mode: "max"
-    keep_top_ckpt: 3
+    keep_top_ckpt: 1
     max_save_images: 100
     final_full_validation: false
 ```

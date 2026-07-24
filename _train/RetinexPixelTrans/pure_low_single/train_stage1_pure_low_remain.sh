@@ -1,30 +1,19 @@
 #!/usr/bin/env bash
 # =============================================================================
-# train_lolv2_ablation.sh — LOLv2 PixelTrans 消融 A–D，共 4 次
-#
-# 对 RetinexPixelTrans 在 LOLv2 pure_low_single 模式下做消融实验，
-# 变化 recon_weight 与 smooth_weight 两个超参：
-#   A (基线)     : recon=1.0  smooth=0.1
-#   B (强平滑)   : recon=1.0  smooth=0.5
-#   C (弱重建)   : recon=0.3  smooth=0.1
-#   D (推荐优先) : recon=0.3  smooth=0.5
-#
-# 用法:
-#   bash _train/train_lolv2_ablation.sh                # 直接训练（默认）
-#   bash _train/train_lolv2_ablation.sh --validate     # 仅预检: 配置验证 + 冒烟测试
+# train_stage1_pure_low_remain.sh — 训练剩下的 5 个纯低光分解（Stage1）的配置
 # =============================================================================
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 PYTHON="${ROOT_DIR}/.venv/bin/python"
 TRAIN_SCRIPT="${ROOT_DIR}/train.py"
 SMOKE_SCRIPT="${ROOT_DIR}/_train/smoke_test.py"
 
 LOG_DIR="${ROOT_DIR}/_tmp"
 mkdir -p "${LOG_DIR}"
-FAILED_LOG="${LOG_DIR}/train_lolv2_ablation_failed.log"
-SUMMARY_LOG="${LOG_DIR}/train_lolv2_ablation_summary.log"
+FAILED_LOG="${LOG_DIR}/train_stage1_pure_low_remain_failed.log"
+SUMMARY_LOG="${LOG_DIR}/train_stage1_pure_low_remain_summary.log"
 
 MODE="${1:-run}"
 if [[ "$MODE" == "--validate" ]]; then
@@ -33,7 +22,7 @@ else
     SKIP_CHECK=true;   VALIDATE_ONLY=false
 fi
 
-TOTAL=4
+TOTAL=5
 CURRENT=0
 TRAIN_FAILED=0
 
@@ -52,12 +41,12 @@ preflight_check() {
 
     echo ""
     echo "  ╔══════════════════════════════════════════════════════════════════════╗"
-    echo "  ║        预检验证 — LOLv2 PixelTrans 消融 A–D (4 配置)                ║"
+    echo "  ║       预检验证 — Stage1 pure_low_single (剩下的 5 配置)               ║"
     echo "  ╚══════════════════════════════════════════════════════════════════════╝"
     echo ""
 
     # ---- 阶段 1：配置 + 数据路径 ----
-    echo -e "${CYAN}  ▸ 阶段 1/2：验证 4 个配置文件与数据路径${NC}"
+    echo -e "${CYAN}  ▸ 阶段 1/2：验证 5 个配置文件与数据路径${NC}"
     hr
 
     "${PYTHON}" -c "
@@ -65,10 +54,11 @@ from utils import load_config
 import os, sys
 
 configs = [
-    ('RetinexPixelTrans | ablation A (r=1.0 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
-    ('RetinexPixelTrans | ablation B (r=1.0 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml'),
-    ('RetinexPixelTrans | ablation C (r=0.3 sm=0.1) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml'),
-    ('RetinexPixelTrans | ablation D (r=0.3 sm=0.5) | LOLv2', 'configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml'),
+    ('Trans | 1.0r a2(0.08) b0.08 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.08bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.10) b0.05 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.05bdsp_0.1smv2.yaml'),
+    ('Trans | 1.0r a2(0.10) b0.10 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.10bdsp_0.1smv2.yaml'),
+    ('Trans | stage2 1.0r a2 b0.05 sm0.1v2', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv2.yaml'),
+    ('Trans | stage2 1.0r a2 b0.05 sm0.1v3', 'configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv3.yaml')
 ]
 
 ok = 0
@@ -95,24 +85,24 @@ if ok != len(configs):
 
     # ---- 阶段 2：冒烟测试 ----
     echo ""
-    echo -e "${CYAN}  ▸ 阶段 2/2：冒烟测试 — 每类别跑 5 个 training step${NC}"
+    echo -e "${CYAN}  ▸ 阶段 2/2：冒烟测试 — 挑选部分跑 5 个 training step${NC}"
     echo "     (验证模型/损失/数据三者能正确对接)"
     hr
 
-    "${PYTHON}" "${SMOKE_SCRIPT}" --subset lolv2_ablation || { failed=1; }
+    "${PYTHON}" "${SMOKE_SCRIPT}" --subset lolv2_pure_single || { failed=1; }
 
     hr
     if [[ $failed -ne 0 ]]; then
         return 1
     fi
-    echo -e "  ${GREEN}预检全部通过 ✅  可以开始 LOLv2 PixelTrans 消融训练${NC}"
+    echo -e "  ${GREEN}预检全部通过 ✅  可以开始 Stage1 pure_low_single 训练${NC}"
     echo ""
 }
 
 # ---- 训练执行函数 ----
 run_exp() {
-    local label="$1"
-    local config="$2"
+    local label="\$1"
+    local config="\$2"
 
     CURRENT=$((CURRENT + 1))
     echo ""
@@ -149,29 +139,32 @@ if [[ "$VALIDATE_ONLY" == true ]]; then
 fi
 
 # =============================================================================
-#  LOLv2 RetinexPixelTrans 消融 A–D — 4 次
+#  Stage1 剩下的 5 次训练
 # =============================================================================
 echo ""
 echo "  ████████████████████████████████████████████████████████████████████████"
-echo "  █  LOLv2 RetinexPixelTrans 消融 A–D：4 次训练"
-echo "  █  recon_weight ∈ {1.0, 0.3}  ✕  smooth_weight ∈ {0.1, 0.5}"
+echo "  █  Stage1 pure_low_single： 剩下的 5 次消融实验训练"
 echo "  ████████████████████████████████████████████████████████████████████████"
 
-run_exp "消融 A (基线)     | LOLv2 recon=1.0 smooth=0.1" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
-run_exp "消融 B (强平滑)   | LOLv2 recon=1.0 smooth=0.5" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.5smv1.yaml"
-run_exp "消融 C (弱重建)   | LOLv2 recon=0.3 smooth=0.1" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"
-run_exp "消融 D (推荐优先) | LOLv2 recon=0.3 smooth=0.5" \
-    "configs/RetinexPixelTrans/pure_low_single/LOLv2_0.3r_0.05anchorv2_0.05bdsp_0.5smv1.yaml"
+run_exp "Stage1 | 1.0r a2(0.08) b0.08 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.08anchorv2_0.08bdsp_0.1smv2.yaml"
+
+run_exp "Stage1 | 1.0r a2(0.10) b0.05 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.05bdsp_0.1smv2.yaml"
+run_exp "Stage1 | 1.0r a2(0.10) b0.10 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_next_1.0r_0.10anchorv2_0.10bdsp_0.1smv2.yaml"
+
+run_exp "Stage1 | stage2 1.0r a2 b0.05 sm0.1v2" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv2.yaml"
+run_exp "Stage1 | stage2 1.0r a2 b0.05 sm0.1v3" \
+    "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_stage2_1.0r_0.05anchorv2_0.05bdsp_0.1smv3.yaml"
 
 # =============================================================================
 #  汇总
 # =============================================================================
 echo ""
 echo "  ╔══════════════════════════════════════════════════════════════════════╗"
-echo "  ║           LOLv2 PixelTrans 消融训练全部完成                          ║"
+echo "  ║           Stage1 pure_low_single 训练全部完成                       ║"
 echo "  ╠══════════════════════════════════════════════════════════════════════╣"
 printf "  ║  总计: %-4s  通过: %-4s  失败: %-4s                              ║\n" \
     "${TOTAL}" "$((TOTAL - TRAIN_FAILED))" "${TRAIN_FAILED}"

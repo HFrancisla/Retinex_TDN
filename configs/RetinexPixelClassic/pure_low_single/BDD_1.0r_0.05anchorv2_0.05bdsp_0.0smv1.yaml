@@ -32,7 +32,7 @@ training:
     save_best_images: true
     selection_metric: "total_loss"
     selection_mode: "min"
-    keep_top_ckpt: 3
+    keep_top_ckpt: 1
     max_save_images: 100
     quick_val_size: 1000
     quick_val_crop_size: 512

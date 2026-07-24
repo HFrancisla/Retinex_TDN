@@ -616,7 +616,7 @@ function init() {{
     for (const ds of dsOrder) {{
         const d = document.createElement('div');
         d.className = 'tab';
-        d.textContent = ds.replace('datasets/','');
+        d.textContent = ds.split('/').pop();
         d.onclick = () => selectDS(ds);
         tabs.appendChild(d);
     }}
@@ -654,7 +654,7 @@ function selectDS(ds) {{
     currentDS = ds;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     for (const t of document.querySelectorAll('.tab')) {{
-        if (t.textContent === ds.replace('datasets/','')) t.classList.add('active');
+        if (t.textContent === ds.split('/').pop()) t.classList.add('active');
     }}
     const info = DATA[ds];
 

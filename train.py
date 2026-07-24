@@ -1375,7 +1375,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=2)
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--data-path', type=str,
-                        default="datasets/LOLv2")
+                        default="/home/ipr4090/2024_hzf/Datasets/LOLv2")
     parser.add_argument(
         "--mode", type=str, default="paired",
         choices=["paired", "unpaired", "pure_low_single", "pure_low_double"],

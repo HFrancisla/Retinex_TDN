@@ -8,7 +8,7 @@ changes intentionally.
 
 ```yaml
 training:
-  save_ckpt_interval: 500
+  save_ckpt_interval: 0
   eval:
     eval_interval: 500
     save_img_interval: 0
@@ -16,7 +16,7 @@ training:
     save_best_images: true
     selection_metric: "r_low_highref_psnr"
     selection_mode: "max"
-    keep_top_ckpt: 3
+    keep_top_ckpt: 1
     max_save_images: 100
     final_full_validation: false
 ```
@@ -32,7 +32,7 @@ Rationale:
   over the reflectance quality used for analysis.
 - `save_img_interval: 0` avoids stale numeric folders such as `img/2000`.
   Training publishes the selected checkpoint once as `img/best`.
-- `save_ckpt_interval: 500` plus `keep_top_ckpt: 3` keeps a small candidate pool
+- `save_ckpt_interval: 500` plus `keep_top_ckpt: 1` keeps a small candidate pool
   for later full validation without keeping every checkpoint.
 - Keep `final_full_validation: false` when only one published image set is
   desired. Enable it only for quick-validation experiments where an additional
