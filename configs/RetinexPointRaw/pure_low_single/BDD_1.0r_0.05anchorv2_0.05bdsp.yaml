@@ -1,21 +1,17 @@
-# RetinexPointRaw — BDD100k pure_low_single 基线 (损失全部使用代码默认值)
 experiment:
-  name: "BDD_1.0r_0.05anchorv2_0.05bdsp"
+  name: BDD_1.0r_0.05anchorv2_0.05bdsp
   auto_name: true
-
 data:
-  path: "/home/ipr4090/2024_hzf/Datasets/BDDnight"
-  mode: "pure_low_single"
+  path: /home/ipr4090/2024_hzf/Datasets/BDDnight
+  mode: pure_low_single
   crop_size: 512
   batch_size: 4
   val_batch_size: 4
   num_workers: 4
-
 model:
-  name: "RetinexPointRaw"
+  name: RetinexPointRaw
   use_dp: false
-  gpu_id: "0"
-
+  gpu_id: '0'
 training:
   seed: 42
   max_iterations: 10000
@@ -28,24 +24,24 @@ training:
     save_img_interval: 0
     save_best_ckpt: true
     save_best_images: true
-    selection_metric: "total_loss"
-    selection_mode: "min"
+    selection_metric: total_loss
+    selection_mode: min
     keep_top_ckpt: 3
     max_save_images: 100
     quick_val_size: 1000
     quick_val_crop_size: 512
     final_full_validation: true
     final_val_batch_size: 2
-
 loss:
-  mode: "pure_low_single_point"
+  mode: pure_low_single_point
   recon_weight: 1.0
   anchor_weight: 0.05
-  anchor_version: "v2"
+  anchor_version: v2
   bdsp_weight: 0.05
-
+  r_tv_weight: 0.0
+  r_consistency_weight: 0.0
+  r_sat_weight: 0.0
 resume:
-  checkpoint: ""
-  weights: ""
-
-device: "cuda"
+  checkpoint: ''
+  weights: ''
+device: cuda

@@ -1,33 +1,20 @@
-# ============================================================
-# 2×2 消融实验 — 配置 A (基线)
-# ============================================================
-# 变量: recon_weight × smooth_weight (anchor/bdsp 固定 0.05)
-#
-#   A: recon=1.0  smooth=0.1  → 基线，验证当前代码下旧有参数
-#   B: recon=1.0  smooth=0.5  → 单独检验 smooth 的效应
-#   C: recon=0.3  smooth=0.1  → 单独检验 recon 的效应
-#   D: recon=0.3  smooth=0.5  → 两项联合调整（推荐优先跑）
-# ============================================================
 experiment:
-  name: "Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1"
+  name: Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1
   auto_name: true
-
 data:
-  path: "/home/ipr4090/2024_hzf/Datasets/LOLv2"
-  mode: "pure_low_single"
+  path: /home/ipr4090/2024_hzf/Datasets/LOLv2
+  mode: pure_low_single
   crop_size: 384
   batch_size: 8
   val_batch_size: 4
   num_workers: 4
-
 model:
-  name: "RetinexPixelTrans"
+  name: RetinexPixelTrans
   dim: 24
   l_heads: 1
   l_ffn_expansion: 2.66
   use_dp: false
-  gpu_id: "0"
-
+  gpu_id: '0'
 training:
   seed: 42
   max_iterations: 10000
@@ -40,23 +27,23 @@ training:
     save_img_interval: 0
     save_best_ckpt: true
     save_best_images: true
-    selection_metric: "total_loss"
-    selection_mode: "min"
+    selection_metric: total_loss
+    selection_mode: min
     keep_top_ckpt: 1
     max_save_images: 100
     final_full_validation: false
-
 loss:
-  mode: "pure_low_single_pixel"
+  mode: pure_low_single_pixel
   recon_weight: 1.0
   anchor_weight: 0.05
-  anchor_version: "v2"
+  anchor_version: v2
   bdsp_weight: 0.05
   smooth_weight: 0.1
-  smooth_version: "v1"
-
+  smooth_version: v1
+  r_tv_weight: 0.0
+  r_consistency_weight: 0.0
+  r_sat_weight: 0.0
 resume:
-  checkpoint: ""
-  weights: ""
-
-device: "cuda"
+  checkpoint: ''
+  weights: ''
+device: cuda
