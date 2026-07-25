@@ -61,8 +61,10 @@ def test_anchor_rejects_unknown_version():
     [
         ('pure_low_single_point', 'v1'),
         ('pure_low_single_point', 'v2'),
+        ('pure_low_single_point', 'v3'),
         ('pure_low_single_pixel', 'v1'),
         ('pure_low_single_pixel', 'v2'),
+        ('pure_low_single_pixel', 'v3'),
     ],
 )
 def test_anchor_version_is_switchable_from_loss_config(mode, version):
@@ -141,6 +143,9 @@ def test_smooth_version_must_be_explicitly_declared_for_pixel_modes(mode):
         'smooth_weight': 0.1,
         'redecomp_l_consistency_weight': 0.05,
         'reflect_weight': 0.1,
+        'r_tv_weight': 0.01,
+        'r_consistency_weight': 0.01,
+        'r_sat_weight': 0.01,
     }
     config = {'mode': mode}
     config.update({key: values[key] for key in _VALID_LOSS_FIELDS[mode]
@@ -168,6 +173,9 @@ def test_point_modes_reject_smooth_version(mode):
         'bdsp_weight': 0.05,
         'redecomp_l_consistency_weight': 0.05,
         'reflect_weight': 0.1,
+        'r_tv_weight': 0.01,
+        'r_consistency_weight': 0.01,
+        'r_sat_weight': 0.01,
     }
     config = {'mode': mode}
     config.update({key: values[key] for key in _VALID_LOSS_FIELDS[mode]})
@@ -267,7 +275,7 @@ def test_smooth_v2_v3_match_finite_difference_reference(version, use_average):
     assert torch.allclose(_retinex_smooth(illumination, reflectance, version), expected)
 
 
-@pytest.mark.parametrize('version', ['v1', 'v2', 'v3'])
+@pytest.mark.parametrize('version', ['v1', 'v2', 'v3', 'v4'])
 def test_smooth_version_is_switchable_from_pixel_loss_config(version):
     config = {
         'mode': 'pure_low_single_pixel',
@@ -327,8 +335,8 @@ def test_loss_output_exposes_only_enabled_weighted_components():
             'recon', 'anchor', 'bdsp', 'smooth',
             'redecomp_l_consistency', 'reflect',
         }),
-        ('pure_low_single_point', {'recon', 'anchor', 'bdsp'}),
-        ('pure_low_single_pixel', {'recon', 'anchor', 'bdsp', 'smooth'}),
+        ('pure_low_single_point', {'recon', 'anchor', 'bdsp', 'r_tv', 'r_consistency', 'r_sat'}),
+        ('pure_low_single_pixel', {'recon', 'anchor', 'bdsp', 'smooth', 'r_tv', 'r_consistency', 'r_sat'}),
     ],
 )
 def test_every_loss_mode_reports_exactly_its_enabled_components(mode, expected_components):
@@ -353,6 +361,10 @@ def test_every_loss_mode_reports_exactly_its_enabled_components(mode, expected_c
             config['redecomp_l_consistency_weight'] = 0.05
         if mode.startswith('pure_low_double_'):
             config['reflect_weight'] = 0.1
+        if mode.startswith('pure_low_single_'):
+            config['r_tv_weight'] = 0.01
+            config['r_consistency_weight'] = 0.01
+            config['r_sat_weight'] = 0.01
     if mode.endswith('_pixel'):
         config.update(smooth_weight=0.1, smooth_version='v1')
 
@@ -668,7 +680,7 @@ def test_every_pixel_config_filename_and_auto_name_expose_smooth_version():
             assert config['loss']['mode'].endswith('_point')
             continue
         versioned_count += 1
-        assert version in {'v1', 'v2', 'v3'}
+        assert version in {'v1', 'v2', 'v3', 'v4'}
         marker = f"sm{version}"
         assert marker in path.name, f'{path} does not contain {marker}'
         assert marker in generate_experiment_name(config)

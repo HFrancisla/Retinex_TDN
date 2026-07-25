@@ -103,10 +103,12 @@ _VALID_LOSS_FIELDS = {
     },
     'pure_low_single_point': {
         'recon_weight', 'anchor_weight', 'bdsp_weight', 'anchor_version',
+        'r_tv_weight', 'r_consistency_weight', 'r_sat_weight',
     },
     'pure_low_single_pixel': {
         'recon_weight', 'anchor_weight', 'bdsp_weight',
         'smooth_weight', 'smooth_version', 'anchor_version',
+        'r_tv_weight', 'r_consistency_weight', 'r_sat_weight',
     },
 }
 

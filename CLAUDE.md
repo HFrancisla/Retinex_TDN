@@ -35,14 +35,15 @@ Retinex-TDN 是低光图像分解网络。模型输入低光图像，输出：
 | `unpaired_pixel` | `UnpairedLoss` | unpaired_point + Retinex smooth |
 | `pure_low_double_point` | `PureLowDoubleLoss` | unpaired_point + reflect |
 | `pure_low_double_pixel` | `PureLowDoubleLoss` | pure_low_double_point + Retinex smooth |
-| `pure_low_single_point` | `PureLowSingleLoss` | 重建、anchor、BDSP |
-| `pure_low_single_pixel` | `PureLowSingleLoss` | pure_low_single_point + Retinex smooth |
+| `pure_low_single_point` | `PureLowSingleLoss` | 重建、anchor(支持v3)、BDSP、R_TV、R_consistency、R_sat |
+| `pure_low_single_pixel` | `PureLowSingleLoss` | pure_low_single_point + Retinex smooth(支持v4) |
 
 规则：
 
 - `_point`：`L` 是全局标量，anchor 约束 `L ≈ max(I)`，不使用 smooth
-- `_pixel`：`L` 是逐像素图，anchor 约束 `mean(L) ≈ mean(I)`，使用 Retinex smooth
+- `_pixel`：`L` 是逐像素图，anchor 约束 `mean(L) ≈ mean(I)` (v1/v2) 或 `L ≈ blur(max(I))` (v3)，使用 Retinex smooth (v1-v4)
 - `pure_low_double`：额外使用 `reflect_weight`，约束两个增强 view 的 `R` 一致
+- `pure_low_single`：新增了 `R_TV` (暗区去噪)、`R_consistency` (防漂移)、`R_sat` (防过曝) 专属约束。
 
 ## 数据集
 
