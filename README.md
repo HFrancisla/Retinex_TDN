@@ -90,7 +90,7 @@ experiment:
 **auto_name=true** 时自动生成格式：`{dataset}_{损失权重缩写}`
 
 - `dataset`：取 `data.path` 最后一段目录名
-- 非零损失权重按固定顺序拼接，格式为 `{值}{缩写}`
+- 配置中显式声明的损失权重按固定顺序拼接，格式为 `{值}{缩写}`
 
 示例输出：
 
@@ -114,7 +114,10 @@ LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.05rlc
 | `anchor_version` | `v1` / `v2` | Anchor 定义版本；与 anchor 合并为 `0.05anchorv1/v2` |
 | `bdsp_weight` | `bdsp` | BDSP 结构保持 |
 | `smooth_weight` | `sm` | 光照平滑（仅 `_pixel` 模式） |
-| `smooth_version` | `v1` / `v2` / `v3` | Raw / Current / Compromise；与 smooth 合并为 `0.1smv1/v2/v3` |
+| `smooth_version` | `v1` / `v2` / `v3` / `v4` | Smooth 定义版本；与 smooth 合并为 `0.1smv1/v2/v3/v4` |
+| `r_tv_weight` | `rtv` | pure-low-single 的 R 暗区 TV 去噪 |
+| `r_consistency_weight` | `rcons` | pure-low-single 的 R 逆向引导约束 |
+| `r_sat_weight` | `rsat` | pure-low-single 的 R 过饱和惩罚 |
 | `redecomp_l_consistency_weight` | `rlc` | R 二次分解后的 L 一致性约束 |
 | `reflect_weight` | `ref` | 反射约束 |
 

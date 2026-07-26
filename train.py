@@ -78,7 +78,7 @@ def generate_experiment_name(cfg):
 
     auto_name=false 时：使用 experiment.name（必填）。
     auto_name=true 时：{dataset}_{losses}
-    其中 dataset 取 data.path 末段，losses 只包含非零权重，
+    其中 dataset 取 data.path 末段，losses 包含配置中显式声明的权重，
     格式为 {值}{缩写}，用 _ 连接。
     """
     # 损失字段 -> 缩写映射（按固定顺序输出）
@@ -92,6 +92,9 @@ def generate_experiment_name(cfg):
         ("anchor_weight",             "anchor"),
         ("bdsp_weight",               "bdsp"),
         ("smooth_weight",             "sm"),
+        ("r_tv_weight",               "rtv"),
+        ("r_consistency_weight",      "rcons"),
+        ("r_sat_weight",              "rsat"),
         ("redecomp_l_consistency_weight", "rlc"),
         ("reflect_weight",            "ref"),
     ]
@@ -115,7 +118,7 @@ def generate_experiment_name(cfg):
     data_path = data_cfg.get("path", "unknown")
     dataset = os.path.basename(data_path.rstrip("/\\"))
 
-    # 损失权重：显式声明的全部输出，方便横向对比
+    # 损失权重：显式声明的全部输出，方便横向对比。
     parts = []
     for key, abbr in LOSS_ABBR:
         if key in loss_cfg:
@@ -135,6 +138,7 @@ def generate_experiment_name(cfg):
 
 _WEIGHTED_LOSS_LOG_ORDER = (
     'recon', 'cross_recon', 'anchor', 'bdsp', 'smooth',
+    'r_tv', 'r_consistency', 'r_sat',
     'redecomp_l_consistency', 'equal_r', 'reflect',
 )
 

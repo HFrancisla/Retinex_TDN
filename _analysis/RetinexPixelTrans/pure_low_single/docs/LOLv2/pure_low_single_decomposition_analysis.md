@@ -11,32 +11,32 @@
 
 ## 2. 视觉效果分析 (Visual Analysis)
 
-在 `_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures` 中包含了几类典型和极端情况的可视化图。
+在 `_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures` 中包含了几类典型和极端情况的可视化图。
 
 ### 2.1 典型分解表现 (Typical Cases)
 
-![LOLv2 Typical 1](_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures/lolv2_typical_index_22.png)
-![LOLv2 Typical 2](_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures/lolv2_typical_index_37.png)
+![LOLv2 Typical 1](_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures/lolv2_typical_index_22.png)
+![LOLv2 Typical 2](_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures/lolv2_typical_index_37.png)
 **结论**: 在正常的典型样本中，R 层成功提亮了图像并呈现出了隐藏的色彩，而 L 层清晰地捕获了光照强度分布（高光区 L 亮，暗区 L 暗）。重构图像 S (S = R * L) 与原低光图像保持了高度的视觉一致性。
 
 ### 2.2 糟糕的光照泄漏 (Worst L Leakage)
 
-![LOLv2 Worst L Leakage 1](_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures/lolv2_worst_l_leakage_index_21.png)
+![LOLv2 Worst L Leakage 1](_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures/lolv2_worst_l_leakage_index_21.png)
 **结论**: 当出现 L Leakage（L 泄漏）时，本应该由 R 层承担的物体纹理或反照率特征错误地进入了 L 层。这导致 R 层过于平滑或出现色块，而 L 层看起来就像是一张去除了颜色的灰度图，失去了纯粹“光照图”的物理意义。
 
 ### 2.3 R层噪声严重 (Worst Noise in R)
 
-![LOLv2 Worst Noise](_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures/lolv2_worst_noise_index_98.png)
+![LOLv2 Worst Noise](_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures/lolv2_worst_noise_index_98.png)
 **结论**: 这是当正则化约束不足或 `recon_weight` 过低时常发生的现象（对应前文数值分析中 `R TV/input` 极高的情况）。模型为了满足重构，强行将原图中的噪声和传感器噪点全部挤压到 R 层，导致反射图 R 充满了严重的彩色噪点。
 
 ### 2.4 重构失败 (Worst Reconstruction)
 
-![LOLv2 Worst Recon](_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures/lolv2_worst_recon_index_70.png)
+![LOLv2 Worst Recon](_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures/lolv2_worst_recon_index_70.png)
 **结论**: 虽然纯低光单视图方法着重分解，但重构 (R*L) 必须尽可能贴近 Input。在一些极端分布样本上，由于 R\_sat (防过曝) 等强制先验，导致 S 和 Input 在亮度和对比度上产生明显差异。
 
 ### 2.5 偏离参考高光 (Worst High-ref for LOLv2)
 
-![LOLv2 Worst Highref](_analysis/RetinexPixelTrans/pure_low_single/steps/results/figures/lolv2_worst_highref_index_73.png)
+![LOLv2 Worst Highref](_analysis/RetinexPixelTrans/pure_low_single/steps/results/LOLv2/figures/lolv2_worst_highref_index_73.png)
 **结论**: 由于 `pure_low_single` 是单视图无监督训练，没有任何成对高光参考。因此，在某些包含复杂光源的场景中，预测的 R 层虽然自恰，但在绝对颜色映射上与真实的 Ground Truth (High) 相差甚远（如颜色发灰、饱和度不足）。数值上对应了 `R->high PSNR` 较低的情况。
 
 ---
