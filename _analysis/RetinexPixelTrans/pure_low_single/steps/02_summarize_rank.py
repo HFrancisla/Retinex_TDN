@@ -175,22 +175,22 @@ def main() -> int:
             )
         )
 
-    write_csv(RESULT_ROOT / "pure_single_summary.csv", summaries)
-    write_csv(RESULT_ROOT / "pure_single_ranking.csv", ranking)
-
-    md_lines = [
-        "# Step 02 pure-low-single summary",
-        "",
-        f"Image set: `{image_set}`",
-        "",
-        "Ranking is computed per dataset. LOLv2 high-reference metrics are diagnostic only; BDDnight is ranked without high-reference metrics.",
-        "",
-        "`anchor_abs_error` is reported but not used as a cross-version rank term because anchor v1/v2 have different targets. Non-v2 anchor runs get a small canonical-anchor penalty so old ablations do not outrank the current v2 baseline solely on a different anchor definition.",
-        "",
-    ]
     for dataset, rows in sorted(by_dataset.items()):
+        dataset_dir = RESULT_ROOT / dataset
+        dataset_dir.mkdir(parents=True, exist_ok=True)
         ranked = [row for row in ranking if row["dataset"] == dataset]
-        md_lines.extend([
+        write_csv(dataset_dir / "pure_single_summary.csv", rows)
+        write_csv(dataset_dir / "pure_single_ranking.csv", ranked)
+
+        md_lines = [
+            f"# Step 02 pure-low-single summary ({dataset})",
+            "",
+            f"Image set: `{image_set}`",
+            "",
+            "Ranking is computed per dataset. LOLv2 high-reference metrics are diagnostic only; BDDnight is ranked without high-reference metrics.",
+            "",
+            "`anchor_abs_error` is reported but not used as a cross-version rank term because anchor v1/v2 have different targets. Non-v2 anchor runs get a small canonical-anchor penalty so old ablations do not outrank the current v2 baseline solely on a different anchor definition.",
+            "",
             f"## {dataset} ranking",
             "",
             markdown_table(
@@ -211,28 +211,28 @@ def main() -> int:
                 ],
             ),
             "",
-        ])
+        ]
         best = ranked[0]
         md_lines.append(f"Dataset verdict: current conservative top is `{best['run']}` (`{best['label']}`).")
         md_lines.append("")
 
-    if missing:
-        md_lines.extend(["## Missing details", "", *[f"- `{item}`" for item in missing], ""])
-    if stale:
-        md_lines.extend([
-            "## Stale details schema",
-            "",
-            "These details lack required pure-low-single diagnostic columns. Run `01_prepare_details.py --force`.",
-            "",
-            *[f"- `{item}`" for item in stale],
-            "",
-        ])
-    if incomplete:
-        md_lines.extend(["## Missing target image-set rows", "", *[f"- `{item}`" for item in incomplete], ""])
-    (RESULT_ROOT / "pure_single_analysis.md").write_text("\n".join(md_lines), encoding="utf-8")
-    print(f"saved: {RESULT_ROOT / 'pure_single_summary.csv'}")
-    print(f"saved: {RESULT_ROOT / 'pure_single_ranking.csv'}")
-    print(f"saved: {RESULT_ROOT / 'pure_single_analysis.md'}")
+        if missing:
+            md_lines.extend(["## Missing details", "", *[f"- `{item}`" for item in missing], ""])
+        if stale:
+            md_lines.extend([
+                "## Stale details schema",
+                "",
+                "These details lack required pure-low-single diagnostic columns. Run `01_prepare_details.py --force`.",
+                "",
+                *[f"- `{item}`" for item in stale],
+                "",
+            ])
+        if incomplete:
+            md_lines.extend(["## Missing target image-set rows", "", *[f"- `{item}`" for item in incomplete], ""])
+        (dataset_dir / "pure_single_analysis.md").write_text("\n".join(md_lines), encoding="utf-8")
+        print(f"saved: {dataset_dir / 'pure_single_summary.csv'}")
+        print(f"saved: {dataset_dir / 'pure_single_ranking.csv'}")
+        print(f"saved: {dataset_dir / 'pure_single_analysis.md'}")
     return 0
 
 

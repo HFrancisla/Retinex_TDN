@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 
 from pure_single_steps_common import (
     RESULT_ROOT,
@@ -73,63 +74,68 @@ def main() -> int:
         row["analysis_ready"] = bool(row["has_target_image_set"] and row["components_complete"])
         rows.append(row)
 
-    write_csv(RESULT_ROOT / "inventory.csv", rows)
-    incomplete = [row for row in rows if not row["analysis_ready"]]
-    missing_details = [row for row in rows if row["analysis_ready"] and not row["has_decomp_details"]]
+    by_dataset: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        by_dataset[str(row.get("dataset", "unknown"))].append(row)
 
-    md_lines = [
-        "# Step 00 pure-low-single inventory",
-        "",
-        f"Target image set: `{image_set}`",
-        f"Runs discovered: `{len(rows)}`",
-        "",
-        "## Artifact summary",
-        "",
-        markdown_table(
-            rows,
-            [
-                ("dataset", "dataset", ""),
-                ("run", "run", ""),
-                ("label", "label", ""),
-                ("img set?", "has_target_image_set", ""),
-                ("complete?", "components_complete", ""),
-                ("R", "R_low_count", ""),
-                ("L", "L_low_count", ""),
-                ("synth", "has_synthesis", ""),
-                ("details", "has_decomp_details", ""),
-                ("full-val", "has_final_full_validation", ""),
-            ],
-        ),
-        "",
-        "## Required follow-up",
-        "",
-    ]
-    if incomplete:
-        md_lines.extend([
-            "These runs are missing target iteration outputs or complete R/L components. Treat them as training/incomplete, not failed analysis:",
+    for dataset, dataset_rows in sorted(by_dataset.items()):
+        dataset_dir = RESULT_ROOT / dataset
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        write_csv(dataset_dir / "inventory.csv", dataset_rows)
+        incomplete = [row for row in dataset_rows if not row["analysis_ready"]]
+        missing_details = [row for row in dataset_rows if row["analysis_ready"] and not row["has_decomp_details"]]
+
+        md_lines = [
+            f"# Step 00 pure-low-single inventory ({dataset})",
+            "",
+            f"Target image set: `{image_set}`",
+            f"Runs discovered: `{len(dataset_rows)}`",
+            "",
+            "## Artifact summary",
             "",
             markdown_table(
-                incomplete,
+                dataset_rows,
                 [
-                    ("dataset", "dataset", ""),
                     ("run", "run", ""),
+                    ("label", "label", ""),
                     ("img set?", "has_target_image_set", ""),
+                    ("complete?", "components_complete", ""),
                     ("R", "R_low_count", ""),
                     ("L", "L_low_count", ""),
-                    ("available", "available_image_sets", ""),
+                    ("synth", "has_synthesis", ""),
+                    ("details", "has_decomp_details", ""),
+                    ("full-val", "has_final_full_validation", ""),
                 ],
             ),
             "",
-        ])
-    if missing_details:
-        md_lines.extend(["Run step 01 to generate missing details for:", ""])
-        md_lines.extend(f"- `{row['run']}`" for row in missing_details)
-        md_lines.append("")
-    if not incomplete and not missing_details:
-        md_lines.append("No blocking artifact gaps for the default analysis path.")
-    (RESULT_ROOT / "inventory.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
-    print(f"saved: {RESULT_ROOT / 'inventory.csv'}")
-    print(f"saved: {RESULT_ROOT / 'inventory.md'}")
+            "## Required follow-up",
+            "",
+        ]
+        if incomplete:
+            md_lines.extend([
+                "These runs are missing target iteration outputs or complete R/L components. Treat them as training/incomplete, not failed analysis:",
+                "",
+                markdown_table(
+                    incomplete,
+                    [
+                        ("run", "run", ""),
+                        ("img set?", "has_target_image_set", ""),
+                        ("R", "R_low_count", ""),
+                        ("L", "L_low_count", ""),
+                        ("available", "available_image_sets", ""),
+                    ],
+                ),
+                "",
+            ])
+        if missing_details:
+            md_lines.extend(["Run step 01 to generate missing details for:", ""])
+            md_lines.extend(f"- `{row['run']}`" for row in missing_details)
+            md_lines.append("")
+        if not incomplete and not missing_details:
+            md_lines.append("No blocking artifact gaps for the default analysis path.")
+        (dataset_dir / "inventory.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+        print(f"saved: {dataset_dir / 'inventory.csv'}")
+        print(f"saved: {dataset_dir / 'inventory.md'}")
     return 0
 
 

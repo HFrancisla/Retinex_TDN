@@ -548,7 +548,7 @@ table.has-high-ref th.reference {{ border-right:3px solid #e94560; }}
     <label style="margin-left:12px">跳转:</label>
     <input type="range" id="imgSlider" min="0" value="0" style="width:200px">
     <label style="margin-left:12px; cursor:pointer;">
-      <input type="checkbox" id="sortByDateToggle" checked onchange="render()"> 按日期最新排序 (V2)
+      <input type="checkbox" id="sortByDateToggle" checked onchange="render()"> 按日期最新排序
     </label>
     <label style="margin-left:12px">SM版本:</label>
     <label style="cursor:pointer;"><input type="checkbox" id="smv1Toggle" checked onchange="render()"> v1</label>

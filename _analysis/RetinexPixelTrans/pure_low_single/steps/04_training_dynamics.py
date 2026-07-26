@@ -18,6 +18,7 @@ from pure_single_steps_common import (
     discover_runs,
     ensure_output_dirs,
     full_validation_metrics,
+    infer_dataset,
     run_config,
     run_label,
     write_csv,
@@ -48,7 +49,7 @@ def parse_log(run_dir) -> list[dict]:
             {
                 "run": run_dir.name,
                 "label": run_label(run_dir, config),
-                "dataset": str((config.get("data", {}) or {}).get("path", "")),
+                "dataset": infer_dataset(config, run_dir.name),
                 "step": int(match.group(1)),
                 "recon_weight": loss.get("recon_weight", ""),
                 "anchor_weight": loss.get("anchor_weight", ""),
@@ -64,7 +65,7 @@ def parse_log(run_dir) -> list[dict]:
     return rows
 
 
-def make_figure(rows: list[dict]) -> None:
+def make_figure(rows: list[dict], dataset_dir) -> None:
     if not rows:
         return
     by_run: dict[str, list[dict]] = defaultdict(list)
@@ -85,7 +86,11 @@ def make_figure(rows: list[dict]) -> None:
     handles, labels = axes[1].get_legend_handles_labels()
     figure.legend(handles, labels, loc="lower center", ncol=3, frameon=False, fontsize=8)
     figure.tight_layout(rect=(0, 0.16, 1, 1))
-    figure.savefig(FIG_ROOT / "training_loss_curves.png", bbox_inches="tight")
+    
+    # FIG_ROOT replacement logic inside make_figure
+    fig_out = dataset_dir / "figures"
+    fig_out.mkdir(parents=True, exist_ok=True)
+    figure.savefig(fig_out / "training_loss_curves.png", bbox_inches="tight")
     plt.close(figure)
 
 
@@ -95,42 +100,59 @@ def main() -> int:
     full_rows = []
     for run_dir in discover_runs():
         config = run_config(run_dir)
+        dataset = infer_dataset(config, run_dir.name)
         full = full_validation_metrics(run_dir)
         if full:
-            full_rows.append({"run": run_dir.name, "label": run_label(run_dir, config), **full})
+            full_rows.append({"run": run_dir.name, "label": run_label(run_dir, config), "dataset": dataset, **full})
         rows.extend(parse_log(run_dir))
-    write_csv(RESULT_ROOT / "training_eval.csv", rows)
-    write_csv(RESULT_ROOT / "final_full_validation_summary.csv", full_rows)
-    make_figure(rows)
 
-    flagged = []
+    by_dataset: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        by_dataset[row["dataset"]].append(row)
+        
+    full_by_dataset: dict[str, list[dict]] = defaultdict(list)
     for row in full_rows:
-        recon_loss = row.get("full_recon_loss", "")
-        weighted = row.get("full_recon_weighted_loss", "")
-        if recon_loss != "" and weighted != "" and float(recon_loss) > float(weighted) * 2:
-            flagged.append(row)
-    md_lines = [
-        "# Step 04 training dynamics",
-        "",
-        f"Eval rows parsed: `{len(rows)}`",
-        f"Full-validation summaries: `{len(full_rows)}`",
-        "",
-        "Use unweighted `full_recon_loss` when comparing runs with different `recon_weight`; weighted total loss is not directly comparable across recon weights.",
-        "",
-    ]
-    if flagged:
-        md_lines.extend(["## Recon-weight comparison warning", ""])
-        for row in flagged:
-            md_lines.append(
-                f"- `{row['run']}`: full recon={float(row['full_recon_loss']):.5f}, "
-                f"weighted recon={float(row['full_recon_weighted_loss']):.5f}"
-            )
-        md_lines.append("")
-    md_lines.append(f"Figure: `{FIG_ROOT / 'training_loss_curves.png'}`")
-    (RESULT_ROOT / "training_dynamics.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
-    print(f"saved: {RESULT_ROOT / 'training_eval.csv'}")
-    print(f"saved: {RESULT_ROOT / 'final_full_validation_summary.csv'}")
-    print(f"saved: {RESULT_ROOT / 'training_dynamics.md'}")
+        full_by_dataset[row["dataset"]].append(row)
+
+    for dataset, dataset_rows in sorted(by_dataset.items()):
+        dataset_dir = RESULT_ROOT / dataset
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        dataset_full = full_by_dataset[dataset]
+        
+        write_csv(dataset_dir / "training_eval.csv", dataset_rows)
+        write_csv(dataset_dir / "final_full_validation_summary.csv", dataset_full)
+        make_figure(dataset_rows, dataset_dir)
+
+        flagged = []
+        for row in dataset_full:
+            recon_loss = row.get("full_recon_loss", "")
+            weighted = row.get("full_recon_weighted_loss", "")
+            if recon_loss != "" and weighted != "" and float(recon_loss) > float(weighted) * 2:
+                flagged.append(row)
+                
+        md_lines = [
+            f"# Step 04 training dynamics ({dataset})",
+            "",
+            f"Eval rows parsed: `{len(dataset_rows)}`",
+            f"Full-validation summaries: `{len(dataset_full)}`",
+            "",
+            "Use unweighted `full_recon_loss` when comparing runs with different `recon_weight`; weighted total loss is not directly comparable across recon weights.",
+            "",
+        ]
+        if flagged:
+            md_lines.extend(["## Recon-weight comparison warning", ""])
+            for row in flagged:
+                md_lines.append(
+                    f"- `{row['run']}`: full recon={float(row['full_recon_loss']):.5f}, "
+                    f"weighted recon={float(row['full_recon_weighted_loss']):.5f}"
+                )
+            md_lines.append("")
+        md_lines.append(f"Figure: `{dataset_dir / 'figures' / 'training_loss_curves.png'}`")
+        (dataset_dir / "training_dynamics.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+        print(f"saved: {dataset_dir / 'training_eval.csv'}")
+        print(f"saved: {dataset_dir / 'final_full_validation_summary.csv'}")
+        print(f"saved: {dataset_dir / 'training_dynamics.md'}")
+        
     return 0
 
 

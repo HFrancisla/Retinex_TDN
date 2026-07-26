@@ -128,16 +128,19 @@ def components(run_name: str, image_set: str, index: int, low_path: Path, high_p
 def main() -> int:
     args = parse_args()
     ensure_output_dirs()
-    ranking_path = RESULT_ROOT / "pure_single_ranking.csv"
-    if not ranking_path.is_file():
+    ranking_paths = list(RESULT_ROOT.glob("*/pure_single_ranking.csv"))
+    if not ranking_paths:
         raise SystemExit("Missing pure_single_ranking.csv. Run 02_summarize_rank.py first.")
-    ranking = read_csv(ranking_path)
+        
     by_dataset: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for row in ranking:
-        by_dataset[row["dataset"]].append(row)
+    for path in ranking_paths:
+        ranking = read_csv(path)
+        for row in ranking:
+            by_dataset[row["dataset"]].append(row)
 
-    selected = []
     for dataset, ranked in sorted(by_dataset.items()):
+        selected = []
+        dataset_dir = RESULT_ROOT / dataset
         top = ranked[: args.top_runs]
         best = top[0]
         best_rows = run_rows(best["run"], args)
@@ -169,7 +172,8 @@ def main() -> int:
                     f"RTV {as_float(metrics, 'r_low_tv_to_input'):.1f}"
                 )
             cols = ["I low", "I high", "R", "L", "R×L", "|S-I|", "|R-high|"] if has_high else ["I low", "R", "L", "R×L", "|S-I|"]
-            output = FIG_ROOT / f"{dataset.lower()}_{case_name}_index_{index}.png"
+            fig_dir = dataset_dir / "figures"
+            output = fig_dir / f"{dataset.lower()}_{case_name}_index_{index}.png"
             make_grid(f"{dataset} {case_name} index={index}; heatmaps clipped", row_labels, cols, images, output)
             selected.append(
                 {
@@ -187,10 +191,11 @@ def main() -> int:
                 }
             )
 
-    write_csv(RESULT_ROOT / "selected_visual_cases.csv", selected)
-    print(f"saved: {RESULT_ROOT / 'selected_visual_cases.csv'}")
-    for row in selected:
-        print(f"saved: {row['figure']}")
+        write_csv(dataset_dir / "selected_visual_cases.csv", selected)
+        print(f"saved: {dataset_dir / 'selected_visual_cases.csv'}")
+        for row in selected:
+            print(f"saved: {row['figure']}")
+            
     return 0
 
 

@@ -136,16 +136,16 @@ def main() -> int:
                 out[f"{key}_p95"] = float(np.quantile(finite, 0.95)) if finite else math.nan
             output_rows.append(out)
 
-    write_csv(RESULT_ROOT / "cross_run_stability.csv", output_rows)
-    md_lines = [
-        "# Step 03 cross-run stability",
-        "",
-        "Baseline per dataset: `recon=1.0, anchor=v2, smooth=0`.",
-        "",
-    ]
     for dataset in sorted({row["dataset"] for row in output_rows}):
+        dataset_dir = RESULT_ROOT / dataset
+        dataset_dir.mkdir(parents=True, exist_ok=True)
         rows = [row for row in output_rows if row["dataset"] == dataset]
-        md_lines.extend([
+        write_csv(dataset_dir / "cross_run_stability.csv", rows)
+        md_lines = [
+            f"# Step 03 cross-run stability ({dataset})",
+            "",
+            "Baseline per dataset: `recon=1.0, anchor=v2, smooth=0`.",
+            "",
             f"## {dataset}",
             "",
             markdown_table(
@@ -162,10 +162,10 @@ def main() -> int:
                 ],
             ),
             "",
-        ])
-    (RESULT_ROOT / "cross_run_stability.md").write_text("\n".join(md_lines), encoding="utf-8")
-    print(f"saved: {RESULT_ROOT / 'cross_run_stability.csv'}")
-    print(f"saved: {RESULT_ROOT / 'cross_run_stability.md'}")
+        ]
+        (dataset_dir / "cross_run_stability.md").write_text("\n".join(md_lines), encoding="utf-8")
+        print(f"saved: {dataset_dir / 'cross_run_stability.csv'}")
+        print(f"saved: {dataset_dir / 'cross_run_stability.md'}")
     return 0
 
 

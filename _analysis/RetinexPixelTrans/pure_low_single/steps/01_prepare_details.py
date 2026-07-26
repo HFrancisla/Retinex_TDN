@@ -7,6 +7,8 @@ import argparse
 import subprocess
 import sys
 
+from collections import defaultdict
+
 from pure_single_steps_common import (
     COMPARE_ANALYZER,
     RESULT_ROOT,
@@ -17,10 +19,12 @@ from pure_single_steps_common import (
     details_path,
     discover_runs,
     ensure_output_dirs,
+    infer_dataset,
     read_csv,
     relative,
     report_path,
     resolve_image_set,
+    run_config,
     selected_image_set,
     write_csv,
 )
@@ -66,12 +70,15 @@ def main() -> int:
     rows = []
     failures = 0
     for run_dir in discover_runs():
+        config = run_config(run_dir)
+        dataset = infer_dataset(config, run_dir.name)
         resolved_image_set = resolve_image_set(run_dir, image_set)
         counts = component_counts(run_dir, resolved_image_set)
         if counts["R_low"] == 0 or counts["L_low"] != counts["R_low"]:
             rows.append(
                 {
                     "run": run_dir.name,
+                    "dataset": dataset,
                     "status": "skip_incomplete",
                     "requested_image_set": image_set,
                     "target_image_set": resolved_image_set,
@@ -102,6 +109,7 @@ def main() -> int:
         rows.append(
             {
                 "run": run_dir.name,
+                "dataset": dataset,
                 "status": "ok" if proc.returncode == 0 else "failed",
                 "requested_image_set": image_set,
                 "target_image_set": resolved_image_set,
@@ -118,9 +126,18 @@ def main() -> int:
             print(proc.stdout.strip())
         if proc.stderr.strip():
             print(proc.stderr.strip(), file=sys.stderr)
-    output = RESULT_ROOT / "prepare_details_log.csv"
-    write_csv(output, rows)
-    print(f"saved: {output}")
+            
+    by_dataset: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        by_dataset[str(row.get("dataset", "unknown"))].append(row)
+        
+    for dataset, dataset_rows in sorted(by_dataset.items()):
+        dataset_dir = RESULT_ROOT / dataset
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        output = dataset_dir / "prepare_details_log.csv"
+        write_csv(output, dataset_rows)
+        print(f"saved: {output}")
+        
     return 1 if failures else 0
 
 

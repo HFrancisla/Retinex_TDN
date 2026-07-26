@@ -33,16 +33,16 @@ SMOKE_SUBSETS = {
          "configs/RetinexPixelClassic/paired/LOLv2_1.0rh_0.3rl_0.001crh_0.001crl_0.1eq_0.1smv1.yaml"),
     ],
     "lolv2_pure_single": [
-        ("pure_low_single_point",
-         "configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml"),
+        # ("pure_low_single_point",
+        #  "configs/RetinexPointRaw/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp.yaml"),
         ("pure_low_single_pixel",
-         "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
-        ("pure_low_single_pixel_minus",
-         "configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"),
+         "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
+        # ("pure_low_single_pixel_minus",
+        #  "configs/RetinexPixelTransMinus/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.0smv1.yaml"),
     ],
     "lolv2_ablation": [
         ("ablation_lolv2",
-         "configs/RetinexPixelTrans/pure_low_single/LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
+         "configs/RetinexPixelTrans/pure_low_single/Stage1_LOLv2_1.0r_0.05anchorv2_0.05bdsp_0.1smv1.yaml"),
     ],
     "bdd": [
         ("BDD_pure_single_point",

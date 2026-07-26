@@ -101,8 +101,8 @@ if ok != len(configs):
 
 # ---- 训练执行函数 ----
 run_exp() {
-    local label="\$1"
-    local config="\$2"
+    local label="$1"
+    local config="$2"
 
     CURRENT=$((CURRENT + 1))
     echo ""
