@@ -55,11 +55,17 @@ def parse_log(run_dir) -> list[dict]:
                 "anchor_weight": loss.get("anchor_weight", ""),
                 "bdsp_weight": loss.get("bdsp_weight", ""),
                 "smooth_weight": loss.get("smooth_weight", ""),
+                "r_tv_weight": loss.get("r_tv_weight", ""),
+                "r_consistency_weight": loss.get("r_consistency_weight", ""),
+                "r_sat_weight": loss.get("r_sat_weight", ""),
                 "total_weighted": number_after(tail, "total"),
                 "recon_weighted": number_after(tail, "recon"),
                 "anchor_weighted": number_after(tail, "anchor"),
                 "bdsp_weighted": number_after(tail, "bdsp"),
                 "smooth_weighted": number_after(tail, "smooth"),
+                "r_tv_weighted": number_after(tail, "r_tv"),
+                "r_consistency_weighted": number_after(tail, "r_consistency"),
+                "r_sat_weighted": number_after(tail, "r_sat"),
             }
         )
     return rows

@@ -563,11 +563,13 @@ table.has-high-ref th.reference {{ border-right:3px solid #e94560; }}
     </label>
     <label style="margin-left:12px">SM版本:</label>
     <label style="cursor:pointer;"><input type="checkbox" id="smv1Toggle" checked onchange="render()"> v1</label>
-    <label style="cursor:pointer;"><input type="checkbox" id="smv2Toggle" onchange="render()"> v2</label>
-    <label style="cursor:pointer;"><input type="checkbox" id="smv3Toggle" onchange="render()"> v3</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="smv2Toggle" checked onchange="render()"> v2</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="smv3Toggle" checked onchange="render()"> v3</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="smv4Toggle" checked onchange="render()"> v4</label>
     <label style="margin-left:12px">Anchor版本:</label>
     <label style="cursor:pointer;"><input type="checkbox" id="anchorv1Toggle" checked onchange="render()"> v1</label>
     <label style="cursor:pointer;"><input type="checkbox" id="anchorv2Toggle" checked onchange="render()"> v2</label>
+    <label style="cursor:pointer;"><input type="checkbox" id="anchorv3Toggle" checked onchange="render()"> v3</label>
     <label style="margin-left:12px">Mode:</label>
     <span id="modeFilters"></span>
   </div>

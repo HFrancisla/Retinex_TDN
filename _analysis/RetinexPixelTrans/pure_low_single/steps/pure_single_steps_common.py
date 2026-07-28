@@ -84,6 +84,9 @@ def config_fingerprint(config: dict[str, Any], run_name: str = "") -> dict[str, 
         "loss.bdsp_weight": loss.get("bdsp_weight", ""),
         "loss.smooth_weight": loss.get("smooth_weight", ""),
         "loss.smooth_version": infer_smooth_version(run_name, config),
+        "loss.r_tv_weight": loss.get("r_tv_weight", ""),
+        "loss.r_consistency_weight": loss.get("r_consistency_weight", ""),
+        "loss.r_sat_weight": loss.get("r_sat_weight", ""),
     }
 
 
@@ -104,7 +107,19 @@ def run_label(run_dir: Path, config: dict[str, Any] | None = None) -> str:
     except (TypeError, ValueError):
         smooth = str(smooth_value)
     smooth_version = infer_smooth_version(run_dir.name, config)
-    return f"r{recon}-a{anchor}-sm{smooth}{smooth_version}"
+    label = f"r{recon}-a{anchor}-sm{smooth}{smooth_version}"
+    
+    for key, abbr in [("r_tv_weight", "rtv"), ("r_consistency_weight", "rcons"), ("r_sat_weight", "rsat")]:
+        val = loss.get(key, 0.0)
+        try:
+            val_float = float(val)
+            if val_float > 0:
+                val_str = str(int(val_float)) if val_float.is_integer() else str(val_float)
+                label += f"-{val_str}{abbr}"
+        except (TypeError, ValueError):
+            pass
+            
+    return label
 
 
 def add_image_set_args(parser) -> None:
