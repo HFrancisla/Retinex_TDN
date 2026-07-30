@@ -96,16 +96,17 @@ for cfg_path in configs:
         data_path = cfg["data"]["path"]
         if not os.path.isdir(data_path):
             raise FileNotFoundError(f"data path missing: {data_path}")
+        model_name = cfg.get("model", {}).get("name", "UnknownModel")
         exp_name = generate_experiment_name(cfg)
-        names.append(exp_name)
+        names.append(f"{model_name}/{exp_name}")
         print(f"OK {cfg_path}")
-        print(f"   auto_name -> {exp_name}")
+        print(f"   auto_name -> {model_name}/{exp_name}")
         ok += 1
     except Exception as exc:
         print(f"FAIL {cfg_path}: {exc}", file=sys.stderr)
 
 if len(names) != len(set(names)):
-    print("FAIL duplicate generated experiment names", file=sys.stderr)
+    print("FAIL duplicate generated experiment paths (model + name)", file=sys.stderr)
     for name in names:
         print(f"  {name}", file=sys.stderr)
     sys.exit(1)
