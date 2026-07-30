@@ -7,10 +7,5 @@ __pycache__
 *.zip
 _tmp/
 # Ignore images in analysis results
-_analysis/**/*.png
-_analysis/**/*.jpg
-_analysis/**/*.jpeg
-_analysis/**/*.pdf
-_analysis/**/*.svg
 *.log
 _thesis/
