@@ -16,14 +16,12 @@ ROOT = Path(__file__).resolve().parents[4]
 EXP_ROOT = ROOT / "experiments" / "RetinexPixelTrans" / "pure_low_single"
 STEP_ROOT = Path(__file__).resolve().parent
 RESULT_ROOT = STEP_ROOT / "results"
-FIG_ROOT = RESULT_ROOT / "figures"
 COMPARE_ANALYZER = ROOT / "_compare" / "analyze_decomposition.py"
 DEFAULT_IMAGE_SET = "auto"
 
 
 def ensure_output_dirs() -> None:
     RESULT_ROOT.mkdir(parents=True, exist_ok=True)
-    FIG_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def discover_runs() -> list[Path]:

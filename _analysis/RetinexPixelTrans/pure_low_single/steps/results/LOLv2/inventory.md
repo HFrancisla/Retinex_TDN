@@ -1,7 +1,7 @@
 # Step 00 pure-low-single inventory (LOLv2)
 
 Target image set: `auto`
-Runs discovered: `30`
+Runs discovered: `34`
 
 ## Artifact summary
 
@@ -22,10 +22,14 @@ Runs discovered: `30`
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.15smv4_0.02rtv_0.0rcons_0.0rsat_20260729-175106 | r1-a3-sm0.15v4-0.02rtv | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.0125rtv_0.0rcons_0.0rsat_20260728-191214 | r1-a3-sm0.1v4-0.0125rtv | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.015rtv_0.0rcons_0.0rsat_20260728-222456 | r1-a3-sm0.1v4-0.015rtv | True | True | 100 | 100 | True | True | False |
+| LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.0175rtv_0.0rcons_0.0rsat_20260730-010418 | r1-a3-sm0.1v4-0.0175rtv | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.01rtv_0.05rcons_0.005rsat_20260727-174536 | r1-a3-sm0.1v4-0.01rtv-0.05rcons-0.005rsat | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.01rtv_0.05rcons_0.0rsat_20260727-143329 | r1-a3-sm0.1v4-0.01rtv-0.05rcons | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.01rtv_0.0rcons_0.0rsat_20260727-080939 | r1-a3-sm0.1v4-0.01rtv | True | True | 100 | 100 | True | True | False |
+| LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.0225rtv_0.0rcons_0.0rsat_20260730-041754 | r1-a3-sm0.1v4-0.0225rtv | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.025rtv_0.0rcons_0.0rsat_20260729-045302 | r1-a3-sm0.1v4-0.025rtv | True | True | 100 | 100 | True | True | False |
+| LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.02rtv_0.01rcons_0.0rsat_20260730-073242 | r1-a3-sm0.1v4-0.02rtv-0.01rcons | True | True | 100 | 100 | True | True | False |
+| LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.02rtv_0.0rcons_0.0025rsat_20260730-104753 | r1-a3-sm0.1v4-0.02rtv-0.0025rsat | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.02rtv_0.0rcons_0.0rsat_20260727-112119 | r1-a3-sm0.1v4-0.02rtv | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.02rtv_0.0rcons_0.0rsat_20260729-013835 | r1-a3-sm0.1v4-0.02rtv | True | True | 100 | 100 | True | True | False |
 | LOLv2_1.0r_0.05anchorv3_0.1bdsp_0.1smv4_0.03rtv_0.0rcons_0.0rsat_20260729-080740 | r1-a3-sm0.1v4-0.03rtv | True | True | 100 | 100 | True | True | False |

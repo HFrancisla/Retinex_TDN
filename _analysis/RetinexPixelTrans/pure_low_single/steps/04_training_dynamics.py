@@ -13,7 +13,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from pure_single_steps_common import (
-    FIG_ROOT,
     RESULT_ROOT,
     discover_runs,
     ensure_output_dirs,

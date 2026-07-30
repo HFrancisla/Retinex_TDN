@@ -14,7 +14,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 from pure_single_steps_common import (
     EXP_ROOT,
-    FIG_ROOT,
     RESULT_ROOT,
     add_image_set_args,
     as_float,
